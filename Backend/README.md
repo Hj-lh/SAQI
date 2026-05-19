@@ -38,8 +38,10 @@ Backend/
 
 ## ⚙️ Hardware / GPIO Pin Map
 
-All pins are **BCM GPIO numbers**. Defined in `components/motor.py` and
-`components/waterpump.py`.
+All pins are **BCM GPIO numbers**. They are defined in **one place** —
+`components/config.py` (single source of truth). Edit pin numbers there;
+`motor.py` / `waterpump.py` import from it. The tables below are reference
+only.
 
 ### Motors — 2× BTS7960 drivers via gpiozero `Robot` (hardware PWM @ 1 kHz)
 

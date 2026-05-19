@@ -8,15 +8,23 @@ Communicates via hardware PWM using the gpiozero library.
 import logging
 from gpiozero import Robot, DigitalOutputDevice
 
+from components.config import (
+    MOTOR_LEFT_FWD_PIN, MOTOR_LEFT_BWD_PIN, MOTOR_LEFT_EN_PIN, MOTOR_LEFT_EN_PIN1,
+    MOTOR_RIGHT_FWD_PIN, MOTOR_RIGHT_BWD_PIN, MOTOR_RIGHT_EN_PIN, MOTOR_RIGHT_EN_PIN1,
+    MOTOR_PWM_FREQUENCY,
+)
+
 logger = logging.getLogger(__name__)
 
 class MotorController:
     """High-level differential-drive controller via PWM."""
 
     def __init__(self,
-                 left_fwd_pin=12, left_bwd_pin=13, left_en_pin=5, left_en_pin1=17,
-                 right_fwd_pin=22, right_bwd_pin=23, right_en_pin=6, right_en_pin1=27,
-                 pwm_frequency=1000):
+                 left_fwd_pin=MOTOR_LEFT_FWD_PIN, left_bwd_pin=MOTOR_LEFT_BWD_PIN,
+                 left_en_pin=MOTOR_LEFT_EN_PIN, left_en_pin1=MOTOR_LEFT_EN_PIN1,
+                 right_fwd_pin=MOTOR_RIGHT_FWD_PIN, right_bwd_pin=MOTOR_RIGHT_BWD_PIN,
+                 right_en_pin=MOTOR_RIGHT_EN_PIN, right_en_pin1=MOTOR_RIGHT_EN_PIN1,
+                 pwm_frequency=MOTOR_PWM_FREQUENCY):
 
         # --------------------------------------------------------------
         # SOFTWARE TRIM (Hardcoded here to keep main.py clean)

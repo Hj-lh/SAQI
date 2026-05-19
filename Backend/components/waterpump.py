@@ -1,22 +1,23 @@
 """
 Water Pump Controller Component
 ================================
-Controls a water pump via a relay on GPIO 25 using gpiozero.
-The relay is active-low (active_high=False).
+Controls a water pump via a relay (gpiozero). The control pin and the
+active-low setting come from components.config (single source of truth) —
+see PUMP_PIN / PUMP_ACTIVE_HIGH there, not hardcoded here.
 """
 
 import logging
 from gpiozero import OutputDevice
 
-logger = logging.getLogger(__name__)
+from components.config import PUMP_PIN, PUMP_ACTIVE_HIGH
 
-_DEFAULT_PIN = 25
+logger = logging.getLogger(__name__)
 
 
 class WaterPumpController:
     """Simple on/off controller for a relay-driven water pump."""
 
-    def __init__(self, pin: int = _DEFAULT_PIN, active_high: bool = False):
+    def __init__(self, pin: int = PUMP_PIN, active_high: bool = PUMP_ACTIVE_HIGH):
         self.relay = OutputDevice(pin, active_high=active_high, initial_value=False)
         self._is_on = False
         logger.info(
