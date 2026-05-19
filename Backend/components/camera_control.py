@@ -26,6 +26,7 @@ import time
 
 import requests
 
+from components.logs import PtzLog
 logger = logging.getLogger(__name__)
 
 _DEFAULT_HOST     = "169.254.138.53"
@@ -65,7 +66,7 @@ class CameraPTZController:
         try:
             if self.get_position() is not None:
                 self.enabled = True
-                logger.info("CameraPTZController initialised  (host=%s)", host)
+                logger.info(PtzLog.INITIALISED.value, host)
             else:
                 logger.warning(
                     "PTZ probe returned no data — control disabled until reachable"
@@ -95,7 +96,7 @@ class CameraPTZController:
         try:
             if self.get_position() is not None:
                 self.enabled = True
-                logger.info("CameraPTZController reachable — PTZ enabled")
+                logger.info(PtzLog.REACHABLE.value)
                 return True
         except Exception as e:  # noqa: BLE001
             logger.debug("PTZ re-probe failed: %s", e)
@@ -244,7 +245,7 @@ class CameraPTZController:
         except Exception:  # noqa: BLE001
             pass
         self.session.close()
-        logger.info("CameraPTZController closed")
+        logger.info(PtzLog.CLOSED.value)
 
 
 # ----------------------------------------------------------------------

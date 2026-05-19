@@ -10,7 +10,9 @@ import logging
 from gpiozero import OutputDevice
 
 from components.config import PUMP_PIN, PUMP_ACTIVE_HIGH
+from components.leds import SAQI_LEDS
 
+from components.logs import PumpLog
 logger = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ class WaterPumpController:
         self.relay = OutputDevice(pin, active_high=active_high, initial_value=False)
         self._is_on = False
         logger.info(
-            "WaterPumpController initialised  (GPIO%d, active_high=%s)",
+            PumpLog.INITIALISED.value,
             pin, active_high,
         )
 
@@ -33,13 +35,15 @@ class WaterPumpController:
         """Turn the water pump ON."""
         self.relay.on()
         self._is_on = True
-        logger.info("Water pump ON")
+        logger.info(PumpLog.ON.value)
+        SAQI_LEDS.watering(True)
 
     def off(self):
         """Turn the water pump OFF."""
         self.relay.off()
         self._is_on = False
-        logger.info("Water pump OFF")
+        logger.info(PumpLog.OFF.value)
+        SAQI_LEDS.watering(False)
 
     @property
     def is_on(self) -> bool:
@@ -54,7 +58,7 @@ class WaterPumpController:
         """Turn off the pump and release GPIO resources."""
         self.off()
         self.relay.close()
-        logger.info("WaterPumpController closed")
+        logger.info(PumpLog.CLOSED.value)
 
 
 # ------------------------------------------------------------------

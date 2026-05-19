@@ -37,7 +37,9 @@ import cv2
 from components.motor import MotorController
 from components.waterpump import WaterPumpController
 from components.reid import PlantReID
+from components.leds import SAQI_LEDS, LEDState
 
+from components.logs import NavLog
 logger = logging.getLogger(__name__)
 
 # --- Speeds ---
@@ -211,7 +213,7 @@ class AutoNavigator:
         This runs in its own thread so detection + navigation keep going
         even when no client is streaming /camera/feed.
         """
-        logger.info("AutoNavigator inference loop started")
+        logger.info(NavLog.INFER_LOOP_STARTED.value)
         while self.is_active:
             frame = self.camera.get_raw_frame()
             if frame is None:
@@ -220,6 +222,7 @@ class AutoNavigator:
                 continue
 
             detections = self.detector.detect(frame)
+            SAQI_LEDS.detect(bool(detections))
             self.update_detections(
                 detections, frame.shape[1], frame.shape[0], frame=frame
             )
@@ -235,7 +238,7 @@ class AutoNavigator:
                 with self._annotated_lock:
                     self._latest_annotated_jpeg = jpeg.tobytes()
 
-        logger.info("AutoNavigator inference loop exited")
+        logger.info(NavLog.INFER_LOOP_EXITED.value)
 
     # ------------------------------------------------------------------
     # Start / Stop
@@ -244,7 +247,7 @@ class AutoNavigator:
     def start(self):
         if self.is_active:
             return
-        logger.info("AutoNavigator starting...")
+        logger.info(NavLog.STARTING.value)
         self.motor.stop()
         self.pump.off()
         if self._ptz_available():
@@ -258,11 +261,12 @@ class AutoNavigator:
             target=self._inference_loop, daemon=True, name="auto-inference"
         )
         self._infer_thread.start()
+        SAQI_LEDS.mode(LEDState.AUTO)
 
     def stop(self):
         if not self.is_active:
             return
-        logger.info("AutoNavigator stopping...")
+        logger.info(NavLog.STOPPING.value)
         self.is_active = False
         self._stop_event.set()
         self._detection_event.set()
@@ -276,6 +280,8 @@ class AutoNavigator:
         self.pump.off()
         if self._ptz_available():
             self.ptz.look_center()
+        SAQI_LEDS.detect(False)
+        SAQI_LEDS.mode(LEDState.MANUAL)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -327,7 +333,7 @@ class AutoNavigator:
 
         if zone == "CENTER":
             if self._oscillating:
-                logger.info("Auto: plant centered — resuming normal speed")
+                logger.info(NavLog.PLANT_CENTERED.value)
             self._oscillating = False
             self._zone_history.clear()
             return
@@ -336,14 +342,14 @@ class AutoNavigator:
             recent = self._zone_history[-3:]
             if all(z == recent[0] for z in recent):
                 if self._oscillating:
-                    logger.info("Auto: zone stabilised (%s) — resuming normal speed", recent[0])
+                    logger.info(NavLog.ZONE_STABILISED.value, recent[0])
                 self._oscillating = False
                 return
 
             a, b, c = recent
             if a == c and a != b and a in ("LEFT", "RIGHT") and b in ("LEFT", "RIGHT"):
                 if not self._oscillating:
-                    logger.info("Auto: oscillation detected (%s→%s→%s) — using gentle speed", a, b, c)
+                    logger.info(NavLog.OSCILLATION.value, a, b, c)
                 self._oscillating = True
 
     # ------------------------------------------------------------------
@@ -383,7 +389,7 @@ class AutoNavigator:
             # Also stamp the track ID so subsequent frames hit the fast path
             if track_id is not None:
                 self._watered_ids.add(track_id)
-                logger.info("Auto: ReID matched watered plant — tagging id=%d", track_id)
+                logger.info(NavLog.REID_MATCH_TAG.value, track_id)
             return True
         return False
 
@@ -433,7 +439,7 @@ class AutoNavigator:
         after its ByteTrack ID is lost.
         """
         target_id = target.get("id")
-        logger.info("Auto: ARRIVED at plant (id=%s) — watering...", target_id)
+        logger.info(NavLog.ARRIVED.value, target_id)
         self.motor.stop()
         self._is_watering = True
         self.pump.on()
@@ -441,7 +447,7 @@ class AutoNavigator:
             for i in range(WATERING_DURATION):
                 if not self.is_active:
                     break
-                logger.info("Auto: watering... (%d/%d s)", i + 1, WATERING_DURATION)
+                logger.info(NavLog.WATERING_PROGRESS.value, i + 1, WATERING_DURATION)
                 if self._sleep(1.0):
                     break
         finally:
@@ -450,10 +456,10 @@ class AutoNavigator:
 
         if target_id is not None:
             self._watered_ids.add(target_id)
-            logger.info("Auto: plant id=%d marked as WATERED (total=%d)",
+            logger.info(NavLog.MARKED_WATERED.value,
                         target_id, len(self._watered_ids))
         else:
-            logger.info("Auto: watering complete — no track ID to remember")
+            logger.info(NavLog.WATERING_COMPLETE_NO_ID.value)
 
         # Capture several appearance embeddings (multi-view) so the same
         # physical plant is recognised later from a very different angle —
@@ -468,7 +474,7 @@ class AutoNavigator:
                 if s < REID_CAPTURE_SAMPLES - 1 and self._sleep(REID_CAPTURE_INTERVAL):
                     break
             if embeddings:
-                logger.info("Auto: captured %d ReID embeddings for watered plant",
+                logger.info(NavLog.REID_CAPTURED.value,
                             len(embeddings))
                 self.reid.register(embeddings)
             else:
@@ -494,7 +500,7 @@ class AutoNavigator:
         REID_RETREAT_INTERVAL and lives inside this loop, so it scales with
         RETREAT_DURATION automatically (nothing hardcoded to 4 s).
         """
-        logger.info("Auto: retreating for %.1fs to look for next plant...", RETREAT_DURATION)
+        logger.info(NavLog.RETREATING.value, RETREAT_DURATION)
         self.motor.backward(AUTO_SPEED_BACKWARD)
         deadline = time.monotonic() + RETREAT_DURATION
         capture = self._reid_available() and target_id is not None
@@ -507,7 +513,7 @@ class AutoNavigator:
                     break
                 unwatered, _, _ = self._snapshot_unwatered()
                 if unwatered:
-                    logger.info("Auto: new unwatered plant spotted during retreat (id=%s)",
+                    logger.info(NavLog.RETREAT_NEW_PLANT.value,
                                 unwatered[0].get("id"))
                     found = True
                     break
@@ -523,7 +529,7 @@ class AutoNavigator:
                     if still_tracked:
                         emb = self._embed_target(target_id, fallback_box)
                         if emb is not None:
-                            logger.info("Auto: +1 retreat ReID view (id=%s)", target_id)
+                            logger.info(NavLog.RETREAT_REID_VIEW.value, target_id)
                             self.reid.extend_last([emb])
 
                 if self._stop_event.wait(timeout=RETREAT_POLL_PERIOD):
@@ -596,7 +602,7 @@ class AutoNavigator:
 
                     # If we just finished a scan, settle before stacking a turn
                     if self._just_finished_scan:
-                        logger.info("Auto: target acquired after scan — stopping to re-evaluate")
+                        logger.info(NavLog.SCAN_TARGET_ACQUIRED.value)
                         self._just_finished_scan = False
                         self.motor.stop()
                         if self._wait_for_detections(SLEEP_WAIT_YOLO):
@@ -674,4 +680,4 @@ class AutoNavigator:
                 except Exception:  # noqa: BLE001
                     pass
             self.is_active = False
-            logger.info("AutoNavigator loop exited — cleanup complete")
+            logger.info(NavLog.LOOP_EXITED.value)

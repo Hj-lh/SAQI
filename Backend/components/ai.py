@@ -17,6 +17,7 @@ import os
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
+from components.logs import AiLog
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "ai_models" / "yolo26n.onnx"
@@ -46,18 +47,18 @@ class PlantDetector:
         self.use_track = _USE_YOLO_WITH_TRACK
         self.target_class_ids = None
 
-        logger.info("Loading YOLO model from %s …", model_path)
+        logger.info(AiLog.LOADING_MODEL.value, model_path)
         try:
             self.model = YOLO(str(model_path))
             self.enabled = True
-            logger.info("YOLO model loaded successfully")
+            logger.info(AiLog.MODEL_LOADED.value)
             
             # Resolve target class ID
             if self.target_class_str:
                 for cls_id, cls_name in self.model.names.items():
                     if cls_name == self.target_class_str:
                         self.target_class_ids = [cls_id]
-                        logger.info("Target class '%s' found with ID: %d", self.target_class_str, cls_id)
+                        logger.info(AiLog.TARGET_CLASS_FOUND.value, self.target_class_str, cls_id)
                         break
                 if self.target_class_ids is None:
                     logger.warning("Target class '%s' not found in model.", self.target_class_str)
@@ -163,7 +164,7 @@ class PlantDetector:
         """Release model resources."""
         self.enabled = False
         self.model = None
-        logger.info("PlantDetector closed")
+        logger.info(AiLog.CLOSED.value)
 
 
 # ------------------------------------------------------------------

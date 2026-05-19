@@ -14,6 +14,7 @@ import time
 
 import cv2
 
+from components.logs import CameraLog
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SOURCE = "http://169.254.138.53/axis-cgi/mjpg/video.cgi"
@@ -50,7 +51,7 @@ class RobotCamera:
             target=self._capture_loop, daemon=True, name="camera-capture"
         )
         self._thread.start()
-        logger.info("RobotCamera initialised  (source=%s)", self.source)
+        logger.info(CameraLog.INITIALISED.value, self.source)
 
     # ------------------------------------------------------------------
     # Background capture
@@ -106,7 +107,7 @@ class RobotCamera:
         self.running = False
         self._thread.join(timeout=3)
         self.cap.release()
-        logger.info("RobotCamera closed")
+        logger.info(CameraLog.CLOSED.value)
 
         # Allow a fresh instance after close
         with self._lock:
@@ -311,7 +312,7 @@ if __name__ == "__main__":
 #             target=self._capture_loop, daemon=True, name="camera-capture"
 #         )
 #         self._thread.start()
-#         logger.info("RobotCamera initialised  (source=%s)", self.source)
+#         logger.info(CameraLog.INITIALISED.value, self.source)
 
 #     # ------------------------------------------------------------------
 #     # Background capture
@@ -367,7 +368,7 @@ if __name__ == "__main__":
 #         self.running = False
 #         self._thread.join(timeout=3)
 #         self.cap.release()
-#         logger.info("RobotCamera closed")
+#         logger.info(CameraLog.CLOSED.value)
 
 #         # Allow a fresh instance after close
 #         with self._lock:

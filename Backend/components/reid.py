@@ -23,6 +23,7 @@ import logging
 import cv2
 import numpy as np
 
+from components.logs import ReidLog
 logger = logging.getLogger(__name__)
 
 _DEFAULT_THRESHOLD = 0.82   # cosine similarity above this ⇒ "same plant"
@@ -56,7 +57,7 @@ class PlantReID:
             self.model = backbone.to(self.device)
             self.preprocess = weights.transforms()
             self.enabled = True
-            logger.info("PlantReID initialised on %s (threshold=%.2f)",
+            logger.info(ReidLog.INITIALISED.value,
                         self.device, similarity_threshold)
         except Exception as e:  # noqa: BLE001
             logger.warning("PlantReID disabled (%s) — falling back to ID-only memory", e)
@@ -124,7 +125,7 @@ class PlantReID:
             logger.warning("PlantReID: register called with no valid embeddings")
             return
         self._plants.append(views)
-        logger.info("PlantReID: plant cluster stored (%d views, total plants=%d)",
+        logger.info(ReidLog.CLUSTER_STORED.value,
                     len(views), len(self._plants))
 
     def extend_last(self, embeddings: list[np.ndarray | None]):
@@ -141,7 +142,7 @@ class PlantReID:
             self.register(views)
             return
         self._plants[-1].extend(views)
-        logger.info("PlantReID: +%d views to last cluster (size=%d, plants=%d)",
+        logger.info(ReidLog.CLUSTER_EXTENDED.value,
                     len(views), len(self._plants[-1]), len(self._plants))
 
     def add(self, embedding: np.ndarray | None):

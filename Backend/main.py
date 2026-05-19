@@ -8,6 +8,7 @@ Run with:  uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
 import logging
+import socket
 import time
 from contextlib import asynccontextmanager
 
@@ -22,11 +23,26 @@ from components.waterpump import WaterPumpController
 from components.ai import PlantDetector
 from components.reid import PlantReID
 from components.automatic import AutoNavigator
+from components.ultrasonic import UltrasonicSensor
+from components.leds import SAQI_LEDS, LEDState
+
+
+def _wifi_ok() -> bool:
+    """Best-effort LAN/internet reachability check for the WIFI LED."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1.0)
+        s.connect(("8.8.8.8", 53))  # no packets sent; just resolves a route
+        s.close()
+        return True
+    except OSError:
+        return False
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(name)-24s  %(levelname)-8s  %(message)s",
 )
+from components.logs import AppLog
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
@@ -38,38 +54,75 @@ system: dict = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialise hardware on startup, release on shutdown."""
-    logger.info("Initialising AgriBot components …")
-    system["motor"] = MotorController()
-    system["camera"] = RobotCamera()
-    system["pump"] = WaterPumpController()
-    system["ai"] = PlantDetector()
+    logger.info(AppLog.INITIALISING.value)
+
+    # Status LEDs first so the rest of init can be reflected on the panel.
+    SAQI_LEDS.initialize()
+    SAQI_LEDS.startup_animation()
+    SAQI_LEDS.mode(LEDState.MANUAL)        # navigator starts in manual
+    SAQI_LEDS.wifi(LEDState.INITIALIZE)
+    SAQI_LEDS.camera(LEDState.INITIALIZE)
+
     try:
-        system["ptz"] = CameraPTZController()
+        system["motor"] = MotorController()
+        system["camera"] = RobotCamera()
+        system["pump"] = WaterPumpController()
+        system["ai"] = PlantDetector()
+        try:
+            system["ptz"] = CameraPTZController()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("PTZ camera control unavailable: %s", e)
+            system["ptz"] = None
+        system["reid"] = PlantReID()
+        system["navigator"] = AutoNavigator(
+            system["motor"],
+            system["pump"],
+            system["camera"],
+            system["ai"],
+            ptz=system["ptz"],
+            reid=system["reid"],
+        )
+        system["ultrasonic"] = UltrasonicSensor()
+        system["ultrasonic"].start()
+
+        # WIFI LED — best-effort reachability
+        SAQI_LEDS.wifi(LEDState.READY if _wifi_ok() else LEDState.ERROR)
+
+        # CAMERA LED — give the capture thread a moment, then verify a frame
+        cam_ok = False
+        for _ in range(10):
+            if system["camera"].get_frame() is not None:
+                cam_ok = True
+                break
+            time.sleep(0.5)
+        SAQI_LEDS.camera(LEDState.READY if cam_ok else LEDState.ERROR)
+
+        logger.info(AppLog.READY.value)
     except Exception as e:  # noqa: BLE001
-        logger.warning("PTZ camera control unavailable: %s", e)
-        system["ptz"] = None
-    system["reid"] = PlantReID()
-    system["navigator"] = AutoNavigator(
-        system["motor"],
-        system["pump"],
-        system["camera"],
-        system["ai"],
-        ptz=system["ptz"],
-        reid=system["reid"],
-    )
-    logger.info("All components ready ✔")
+        logger.exception("Component initialisation failed: %s", e)
+        SAQI_LEDS.error(True)
+        raise
 
     yield  # ← app is running
 
-    logger.info("Shutting down AgriBot components …")
-    system["navigator"].stop()
-    system["motor"].close()
-    system["camera"].close()
-    system["pump"].close()
-    system["ai"].close()
+    logger.info(AppLog.SHUTTING_DOWN.value)
+    if system.get("navigator") is not None:
+        system["navigator"].stop()
+    if system.get("ultrasonic") is not None:
+        system["ultrasonic"].close()
+    if system.get("motor") is not None:
+        system["motor"].close()
+    if system.get("camera") is not None:
+        system["camera"].close()
+    if system.get("pump") is not None:
+        system["pump"].close()
+    if system.get("ai") is not None:
+        system["ai"].close()
     if system.get("ptz") is not None:
         system["ptz"].close()
-    logger.info("Shutdown complete")
+    SAQI_LEDS.all_off()
+    SAQI_LEDS.close()
+    logger.info(AppLog.SHUTDOWN_COMPLETE.value)
 
 
 app = FastAPI(title="AgriBot API", version="1.0.0", lifespan=lifespan)

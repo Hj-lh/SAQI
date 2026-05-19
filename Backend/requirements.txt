@@ -10,3 +10,8 @@ lgpio
 python-dotenv
 pyserial
 requests
+
+# Status LEDs (WS2812 on GPIO18). NOTE: rpi_ws281x usually needs root —
+# run the server with sudo, or the LED panel self-disables (system still runs).
+rpi_ws281x
+adafruit-circuitpython-neopixel

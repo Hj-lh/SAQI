@@ -13,6 +13,8 @@ from components.config import (
     MOTOR_RIGHT_FWD_PIN, MOTOR_RIGHT_BWD_PIN, MOTOR_RIGHT_EN_PIN, MOTOR_RIGHT_EN_PIN1,
     MOTOR_PWM_FREQUENCY,
 )
+from components.leds import SAQI_LEDS
+from components.logs import MotorLog
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ class MotorController:
             self.robot.right_motor.forward_device.frequency = pwm_frequency
             self.robot.right_motor.backward_device.frequency = pwm_frequency
 
-            logger.info("MotorController initialized with 4 Enables and Trim.")
+            logger.info(MotorLog.INITIALIZED.value)
 
         except Exception as e:
             logger.error("Failed to initialize BTS7960 PWM pins: %s", e)
@@ -85,32 +87,37 @@ class MotorController:
 
     def backward(self, speed: float = 0.5):
         speed = abs(speed)
-        logger.info("Backward speed=%.2f", speed)
+        logger.info(MotorLog.BACKWARD.value, speed)
         self._set_robot_value(speed, speed)
+        SAQI_LEDS.moving(True)
 
     def forward(self, speed: float = 0.5):
         speed = abs(speed)
-        logger.info("Forward speed=%.2f", speed)
+        logger.info(MotorLog.FORWARD.value, speed)
         self._set_robot_value(-speed, -speed)
+        SAQI_LEDS.moving(True)
 
     def left(self, speed: float = 0.5):
         speed = abs(speed) * 2.0
         if speed > 1.0:
             speed = 1.0
-        logger.info("Left speed=%.2f", speed)
+        logger.info(MotorLog.LEFT.value, speed)
         self._set_robot_value(speed, -speed)
+        SAQI_LEDS.moving(True)
 
     def right(self, speed: float = 0.5):
         speed = abs(speed) * 2.0
         if speed > 1.0:
             speed = 1.0
-        logger.info("Right speed=%.2f", speed)
+        logger.info(MotorLog.RIGHT.value, speed)
         self._set_robot_value(-speed, speed)
+        SAQI_LEDS.moving(True)
 
     def stop(self):
         """Immediately shut down both motors."""
-        logger.info("Stop")
+        logger.info(MotorLog.STOP.value)
         self.robot.stop()
+        SAQI_LEDS.moving(False)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -132,7 +139,7 @@ class MotorController:
         if hasattr(self, 'robot'):
             self.robot.close()
 
-        logger.info("MotorController closed")
+        logger.info(MotorLog.CLOSED.value)
 
 
 if __name__ == "__main__":

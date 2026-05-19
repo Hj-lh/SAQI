@@ -66,6 +66,27 @@ only.
 |------------|------|--------------------------------------------------|
 | Pump relay | 25   | **Active-LOW** relay, starts OFF (`initial_value=False`) |
 
+### Status LEDs (WS2812 / NeoPixel, 8 LEDs)
+
+| Function     | GPIO | Notes                                            |
+|--------------|------|--------------------------------------------------|
+| LED data in  | 18   | PWM. `rpi_ws281x` usually needs **root** — without it the panel self-disables (system still runs) |
+
+8-LED meaning (auto-driven by system events): **1** Manual/Auto · **2** Wifi ·
+**3** Camera · **4** Ultrasonic · **5** Moving · **6** Detect · **7** Watering
+· **8** Error. Manual mode = red, Auto = green, init = orange blink,
+ready = green, error = red/blink.
+
+### Ultrasonic (HC-SR04)
+
+| Function | GPIO | Notes                                          |
+|----------|------|------------------------------------------------|
+| Trigger  | 20   | `gpiozero.DistanceSensor`                       |
+| Echo     | 21   | **Use a 5 V → 3.3 V divider on ECHO**           |
+
+Reading + LED only — drives the Ultrasonic LED when an obstacle is within
+`ULTRASONIC_OBSTACLE_CM`; does **not** alter autonomous navigation.
+
 ### Camera (no GPIO — network device)
 
 | Function          | Connection                                            |
@@ -352,6 +373,10 @@ const { position } = await r.json();   // { pan, tilt, zoom, ... }
 | POST | `/pump/on` | `{"status":"pump_on"}` |
 | POST | `/pump/off` | `{"status":"pump_off"}` |
 | GET  | `/pump/status` | `{"is_on": true}` |
+
+> Ultrasonic has **no HTTP endpoint** — it's an internal sensor that only
+> drives the ULTRASONIC status LED (no nav effect). See the hardware pin map
+> above.
 
 ### AI detection (one-shot)
 

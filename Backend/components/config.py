@@ -28,3 +28,18 @@ MOTOR_PWM_FREQUENCY  = 1000   # Hz — overrides gpiozero default (anti-whine)
 # ------------------------------------------------------------------
 PUMP_PIN         = 25         # relay control pin
 PUMP_ACTIVE_HIGH = False      # relay board is active-LOW
+
+# ------------------------------------------------------------------
+# Status LEDs — WS2812 / NeoPixel strip (8 LEDs)
+# ------------------------------------------------------------------
+LED_PIN        = 18           # BCM data pin (PWM). Mapped to board.D18.
+LED_COUNT      = 8
+LED_BRIGHTNESS = 0.20         # 0.0 – 1.0
+
+# ------------------------------------------------------------------
+# Ultrasonic — HC-SR04 (gpiozero.DistanceSensor)
+# ------------------------------------------------------------------
+ULTRASONIC_TRIG_PIN    = 20   # ← set to your wiring
+ULTRASONIC_ECHO_PIN    = 21   # ← set to your wiring (5V→3V3 divider on ECHO!)
+ULTRASONIC_MAX_CM      = 200  # sensor max range used for scaling
+ULTRASONIC_OBSTACLE_CM = 30   # ULTRASONIC LED turns ON when distance < this
