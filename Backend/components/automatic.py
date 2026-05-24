@@ -38,6 +38,12 @@ from components.motor import MotorController
 from components.waterpump import WaterPumpController
 from components.reid import PlantReID
 from components.leds import SAQI_LEDS, LEDState
+from components.config import (
+    ULTRASONIC_AVOID_BACKWARD_SECONDS,
+    ULTRASONIC_AVOID_FORWARD_SECONDS,
+    ULTRASONIC_AVOID_SPEED,
+    ULTRASONIC_AVOID_TURN_SECONDS,
+)
 
 from components.logs import NavLog
 logger = logging.getLogger(__name__)
@@ -94,6 +100,7 @@ class AutoNavigator:
         detector,                     # PlantDetector — YOLO inference
         ptz=None,                     # CameraPTZController | None
         reid: PlantReID | None = None,
+        ultrasonic=None,
     ):
         self.motor = motor
         self.pump = pump
@@ -101,6 +108,7 @@ class AutoNavigator:
         self.detector = detector
         self.ptz = ptz                # may be None if camera control unavailable
         self.reid = reid              # may be None if torchvision unavailable
+        self.ultrasonic = ultrasonic
 
         self.is_active = False
         self._thread = None
@@ -252,6 +260,8 @@ class AutoNavigator:
         self.pump.off()
         if self._ptz_available():
             self.ptz.look_center()
+        if self.ultrasonic is not None:
+            self.ultrasonic.set_auto_active(True)
         self._reset_state()
         self._stop_event.clear()
         self.is_active = True
@@ -280,6 +290,8 @@ class AutoNavigator:
         self.pump.off()
         if self._ptz_available():
             self.ptz.look_center()
+        if self.ultrasonic is not None:
+            self.ultrasonic.set_auto_active(False)
         SAQI_LEDS.detect(False)
         SAQI_LEDS.mode(LEDState.MANUAL)
 
@@ -572,12 +584,60 @@ class AutoNavigator:
         return self._wait_for_detections(SLEEP_WAIT_YOLO)
 
     # ------------------------------------------------------------------
+    # Obstacle avoidance
+    # ------------------------------------------------------------------
+
+    def _obstacle_detected(self) -> bool:
+        return (
+            self.ultrasonic is not None
+            and getattr(self.ultrasonic, "enabled", False)
+            and self.ultrasonic.is_obstacle()
+        )
+
+    def _avoid_obstacle(self) -> bool:
+        direction = self.ultrasonic.best_direction() or "right"
+        logger.info(NavLog.OBSTACLE_AVOIDANCE.value, direction)
+
+        self.motor.stop()
+        self.motor.backward(ULTRASONIC_AVOID_SPEED)
+        if self._sleep(ULTRASONIC_AVOID_BACKWARD_SECONDS):
+            return True
+
+        turn = self.motor.right if direction == "right" else self.motor.left
+        restore = self.motor.left if direction == "right" else self.motor.right
+
+        self.motor.stop()
+        turn(ULTRASONIC_AVOID_SPEED)
+        if self._sleep(ULTRASONIC_AVOID_TURN_SECONDS):
+            return True
+
+        self.motor.stop()
+        self.motor.forward(ULTRASONIC_AVOID_SPEED)
+        if self._sleep(ULTRASONIC_AVOID_FORWARD_SECONDS):
+            return True
+
+        self.motor.stop()
+        restore(ULTRASONIC_AVOID_SPEED)
+        if self._sleep(ULTRASONIC_AVOID_TURN_SECONDS):
+            return True
+
+        self.motor.stop()
+        if self.ultrasonic is not None:
+            self.ultrasonic.scan()
+        return self._wait_for_detections(SLEEP_WAIT_YOLO)
+
+    # ------------------------------------------------------------------
     # Main navigation loop
     # ------------------------------------------------------------------
 
     def _loop(self):
         try:
             while self.is_active:
+                if self._obstacle_detected():
+                    if self._avoid_obstacle():
+                        break
+                    continue
+
                 # 1. Snapshot latest unwatered detections
                 detections, width, height = self._snapshot_unwatered()
 
@@ -679,5 +739,7 @@ class AutoNavigator:
                     self.ptz.look_center()
                 except Exception:  # noqa: BLE001
                     pass
+            if self.ultrasonic is not None:
+                self.ultrasonic.set_auto_active(False)
             self.is_active = False
             logger.info(NavLog.LOOP_EXITED.value)

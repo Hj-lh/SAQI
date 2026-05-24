@@ -1,4 +1,4 @@
-# 🌱 AgriBot Backend
+# 🌱 SAQI Backend
 
 A **FastAPI**-powered backend for a Raspberry Pi agricultural robot. Controls
 motors, a water pump, a live AXIS PTZ camera feed, AI-based plant detection
@@ -77,15 +77,14 @@ only.
 · **8** Error. Manual mode = red, Auto = green, init = orange blink,
 ready = green, error = red/blink.
 
-### Ultrasonic (HC-SR04)
+### Ultrasonic sensor head (ESP32 + HC-SR04 + servo)
 
-| Function | GPIO | Notes                                          |
-|----------|------|------------------------------------------------|
-| Trigger  | 20   | `gpiozero.DistanceSensor`                       |
-| Echo     | 21   | **Use a 5 V → 3.3 V divider on ECHO**           |
-
-Reading + LED only — drives the Ultrasonic LED when an obstacle is within
-`ULTRASONIC_OBSTACLE_CM`; does **not** alter autonomous navigation.
+| Function | Connection | Notes                                          |
+|----------|------------|------------------------------------------------|
+| ESP32 sensor head | USB serial | Configure `ULTRASONIC_SERIAL_PORT` in `components/config.py` |
+Manual mode logs front/left/right readings and drives the Ultrasonic LED.
+Automatic mode also uses the sensor for obstacle avoidance when distance is
+below `ULTRASONIC_OBSTACLE_CM`.
 
 ### Camera (no GPIO — network device)
 
@@ -374,9 +373,8 @@ const { position } = await r.json();   // { pan, tilt, zoom, ... }
 | POST | `/pump/off` | `{"status":"pump_off"}` |
 | GET  | `/pump/status` | `{"is_on": true}` |
 
-> Ultrasonic has **no HTTP endpoint** — it's an internal sensor that only
-> drives the ULTRASONIC status LED (no nav effect). See the hardware pin map
-> above.
+> Ultrasonic has **no HTTP endpoint**. It is read internally from the ESP32
+> over USB serial and used by autonomous obstacle avoidance.
 
 ### AI detection (one-shot)
 
