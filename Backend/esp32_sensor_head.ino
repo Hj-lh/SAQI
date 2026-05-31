@@ -4,14 +4,15 @@
 #define ECHO_PIN 18
 #define SERVO_PIN 19
 
-const int SERVO_LEFT = 150;
+const int SERVO_LEFT = 9;
 const int SERVO_CENTER = 90;
-const int SERVO_RIGHT = 30;
-const int SERVO_SETTLE_MS = 350;
+const int SERVO_RIGHT = 180;
+const int SERVO_SIDE_SETTLE_MS = 600;
+const int SERVO_CENTER_SETTLE_MS = 400;
 
 Servo headServo;
 
-float readDistanceOnce() {
+float readDistance() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -23,23 +24,6 @@ float readDistanceOnce() {
   return duration * 0.034 / 2.0;
 }
 
-float readDistance() {
-  float total = 0;
-  int count = 0;
-
-  for (int i = 0; i < 3; i++) {
-    float cm = readDistanceOnce();
-    if (cm > 0) {
-      total += cm;
-      count++;
-    }
-    delay(30);
-  }
-
-  if (count == 0) return -1;
-  return total / count;
-}
-
 String cmJson(float cm) {
   if (cm < 0) return "null";
   return String(cm, 1);
@@ -49,9 +33,9 @@ void centerServo() {
   headServo.write(SERVO_CENTER);
 }
 
-float lookAndRead(int angle) {
+float lookAndRead(int angle, int settleMs) {
   headServo.write(angle);
-  delay(SERVO_SETTLE_MS);
+  delay(settleMs);
   return readDistance();
 }
 
@@ -61,11 +45,13 @@ void sendDistance() {
 }
 
 void sendScan() {
-  float front = lookAndRead(SERVO_CENTER);
-  float right = lookAndRead(SERVO_RIGHT);
-  float left = lookAndRead(SERVO_LEFT);
+  float front = readDistance();
+  float left = lookAndRead(SERVO_LEFT, SERVO_SIDE_SETTLE_MS);
   centerServo();
-  delay(SERVO_SETTLE_MS);
+  delay(SERVO_CENTER_SETTLE_MS);
+  float right = lookAndRead(SERVO_RIGHT, SERVO_SIDE_SETTLE_MS);
+  centerServo();
+  delay(SERVO_CENTER_SETTLE_MS);
 
   String best = "right";
   if (left > right) best = "left";
@@ -87,9 +73,9 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  headServo.setPeriodHertz(50);
-  headServo.attach(SERVO_PIN, 500, 2400);
+  headServo.attach(SERVO_PIN);
   centerServo();
+  delay(500);
 }
 
 void loop() {

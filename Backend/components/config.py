@@ -37,6 +37,10 @@ ULTRASONIC_SERIAL_TIMEOUT = 3.0  # > worst-case SCAN (~2s) so replies aren't cut
 ULTRASONIC_OBSTACLE_CM = 20
 ULTRASONIC_POLL_INTERVAL = 0.5
 ULTRASONIC_SCAN_COOLDOWN = 3.0
+# In auto mode, a centered plant is watered once the front distance is within
+# this range (physical confirmation that YOLO's "arrived" is real). Falls back
+# to YOLO box-area when the sensor is unavailable. See AutoNavigator._ready_to_water.
+WATER_DISTANCE_CM = 20
 
 # Autonomous obstacle avoidance movement.
 ULTRASONIC_AVOID_BACKWARD_SECONDS = 1.0

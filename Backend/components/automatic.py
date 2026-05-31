@@ -47,6 +47,7 @@ from components.config import (
     ULTRASONIC_AVOID_FORWARD_SECONDS,
     ULTRASONIC_AVOID_SPEED,
     ULTRASONIC_AVOID_TURN_SECONDS,
+    WATER_DISTANCE_CM,
     PLANTS_PER_RUN,
     BASE_QR_PAYLOAD,
     BASE_ARRIVAL_AREA_RATIO,
@@ -361,6 +362,31 @@ class AutoNavigator:
         ratio = box_area / frame_area if frame_area > 0 else 0
         logger.debug("Auto: box area ratio = %.2f (threshold=%.2f)", ratio, ARRIVAL_AREA_RATIO)
         return ratio >= ARRIVAL_AREA_RATIO
+
+    def _ultrasonic_ready(self) -> bool:
+        return (
+            self.ultrasonic is not None
+            and getattr(self.ultrasonic, "enabled", False)
+        )
+
+    def _ready_to_water(self, box: list[float], frame_width: int, frame_height: int) -> bool:
+        """Decide whether a *centered* plant is close enough to water.
+
+        Prefers the ultrasonic front distance as the physical "arrived" signal
+        (YOLO box-area is jittery). Falls back to box-area only when the sensor
+        is unavailable or returned no reading this cycle.
+        """
+        if self._ultrasonic_ready():
+            cm = self.ultrasonic.distance_cm()
+            if cm is not None:
+                ready = cm <= WATER_DISTANCE_CM
+                logger.info(
+                    "Auto: water gate — front=%.1f cm (threshold=%d cm) → %s",
+                    cm, WATER_DISTANCE_CM, "WATER" if ready else "approach",
+                )
+                return ready
+            logger.debug("Auto: no ultrasonic reading — falling back to YOLO box area")
+        return self._is_arrived(box, frame_width, frame_height)
 
     def _get_turn_speed(self) -> float:
         speed = AUTO_SPEED_TURN_GENTLE if self._oscillating else AUTO_SPEED_TURN
@@ -742,6 +768,24 @@ class AutoNavigator:
             and self.ultrasonic.is_obstacle()
         )
 
+    def _centered_target_in_view(self) -> bool:
+        """True if an unwatered plant is currently centered in frame.
+
+        Used to suppress obstacle avoidance: when we are driving up to a
+        centered plant to water it, the ultrasonic sees the plant itself as a
+        near obstacle — without this guard the robot would reverse away from
+        the very plant it is trying to water. Does not apply while returning to
+        base (no plant targets then; obstacles are real walls).
+        """
+        if self._returning:
+            return False
+        detections, width, _ = self._snapshot_unwatered()
+        if not detections:
+            return False
+        best = max(detections, key=lambda d: d["confidence"])
+        x1, _, x2, _ = best["box"]
+        return self._get_zone((x1 + x2) / 2.0, width) == "CENTER"
+
     def _avoid_obstacle(self) -> bool:
         direction = self.ultrasonic.best_direction() or "right"
         logger.info(NavLog.OBSTACLE_AVOIDANCE.value, direction)
@@ -781,7 +825,9 @@ class AutoNavigator:
     def _loop(self):
         try:
             while self.is_active:
-                if self._obstacle_detected():
+                # A centered plant reads as a near obstacle as we approach it —
+                # don't avoid the target we're trying to water.
+                if self._obstacle_detected() and not self._centered_target_in_view():
                     if self._avoid_obstacle():
                         break
                     continue
@@ -838,7 +884,7 @@ class AutoNavigator:
                         continue
 
                     # --- ARRIVED: water the plant ---
-                    if zone == "CENTER" and self._is_arrived([x1, y1, x2, y2], width, height):
+                    if zone == "CENTER" and self._ready_to_water([x1, y1, x2, y2], width, height):
                         self._do_watering(best)
                         if not self.is_active:
                             break

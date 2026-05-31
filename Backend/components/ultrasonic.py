@@ -42,7 +42,6 @@ class UltrasonicSensor:
         self._serial_lock = threading.Lock()
         self._lock = threading.Lock()
         self._latest_cm: float | None = None
-        self._last_obstacle = False
         self._scan_logged = False
         self._auto_active = False
 
@@ -167,10 +166,12 @@ class UltrasonicSensor:
 
             SAQI_LEDS.ultrasonic(obstacle)
 
-            if cm is not None and obstacle != self._last_obstacle:
-                state = "obstacle" if obstacle else "clear"
-                logger.info("Ultrasonic front: %.1f cm (%s)", cm, state)
-                self._last_obstacle = obstacle
+            # Log every poll so the live distance is always visible.
+            if cm is not None:
+                logger.info("Ultrasonic front: %.1f cm (%s)", cm,
+                            "obstacle" if obstacle else "clear")
+            else:
+                logger.info("Ultrasonic front: no echo (out of range / no reading)")
 
             if obstacle and not auto_active and not self._scan_logged:
                 scan = self.scan()
