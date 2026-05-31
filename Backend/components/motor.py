@@ -98,17 +98,13 @@ class MotorController:
         SAQI_LEDS.moving(True)
 
     def left(self, speed: float = 0.5):
-        speed = abs(speed) * 2.0
-        if speed > 1.0:
-            speed = 1.0
+        speed = abs(speed)
         logger.info(MotorLog.LEFT.value, speed)
         self._set_robot_value(speed, -speed)
         SAQI_LEDS.moving(True)
 
     def right(self, speed: float = 0.5):
-        speed = abs(speed) * 2.0
-        if speed > 1.0:
-            speed = 1.0
+        speed = abs(speed)
         logger.info(MotorLog.RIGHT.value, speed)
         self._set_robot_value(-speed, speed)
         SAQI_LEDS.moving(True)

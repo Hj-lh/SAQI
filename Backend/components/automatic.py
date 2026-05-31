@@ -38,57 +38,40 @@ from components.motor import MotorController
 from components.waterpump import WaterPumpController
 from components.reid import PlantReID
 from components.leds import SAQI_LEDS, LEDState
+# Navigation tuning lives in components.config (single source of truth, so it
+# can be surfaced/edited via the settings UI). These names become module-level
+# globals here; AutoNavigator.start() re-binds the editable ones from the
+# runtime settings before each auto run (see components.settings).
 from components.config import (
     ULTRASONIC_AVOID_BACKWARD_SECONDS,
     ULTRASONIC_AVOID_FORWARD_SECONDS,
     ULTRASONIC_AVOID_SPEED,
     ULTRASONIC_AVOID_TURN_SECONDS,
+    PLANTS_PER_RUN,
+    BASE_QR_PAYLOAD,
+    BASE_ARRIVAL_AREA_RATIO,
+    AUTO_SPEED_FORWARD,
+    AUTO_SPEED_BACKWARD,
+    AUTO_SPEED_TURN,
+    AUTO_SPEED_TURN_GENTLE,
+    MIN_TURN_SPEED,
+    MOVE_TURN_DURATION,
+    MOVE_FORWARD_DURATION,
+    SLEEP_WAIT_YOLO,
+    SCAN_TURN_DURATION,
+    REID_CAPTURE_SAMPLES,
+    REID_CAPTURE_INTERVAL,
+    REID_RETREAT_INTERVAL,
+    CENTER_MARGIN,
+    ARRIVAL_AREA_RATIO,
+    WATERING_DURATION,
+    RETREAT_DURATION,
+    RETREAT_POLL_PERIOD,
+    LOST_THRESHOLD,
 )
 
 from components.logs import NavLog
 logger = logging.getLogger(__name__)
-
-# --- Speeds ---
-AUTO_SPEED_FORWARD     = 0.6
-AUTO_SPEED_BACKWARD    = 0.5
-AUTO_SPEED_TURN        = 0.75
-AUTO_SPEED_TURN_GENTLE = 0.375
-MIN_TURN_SPEED         = 0.375
-
-# --- Durations (how long motors run per action) ---
-MOVE_TURN_DURATION    = 0.5
-MOVE_FORWARD_DURATION = 1.0
-
-# --- After stopping, wait for fresh YOLO detections ---
-SLEEP_WAIT_YOLO = 1.5
-
-# --- Scanning ---
-SCAN_TURN_DURATION = 1.0
-
-# --- ReID multi-view capture (at watering time) ---
-REID_CAPTURE_SAMPLES  = 5
-REID_CAPTURE_INTERVAL = 0.2   # seconds between embedding samples
-
-# --- ReID capture while retreating (far/angled views) ---
-# Time-throttled INSIDE the retreat loop, which is bounded by
-# RETREAT_DURATION — so shortening the retreat shortens capture too.
-REID_RETREAT_INTERVAL = 0.4   # seconds between retreat-time ReID captures
-
-# --- Geometry ---
-CENTER_MARGIN = 0.33  # Middle third of the frame is "CENTER"
-
-# --- Arrival ---
-ARRIVAL_AREA_RATIO = 0.5
-
-# --- Watering ---
-WATERING_DURATION = 5  # seconds
-
-# --- Retreat after watering ---
-RETREAT_DURATION   = 4.0   # seconds the robot drives backward
-RETREAT_POLL_PERIOD = 0.1  # how often to check for new targets while reversing
-
-# --- How many cycles with no detection before switching to scan ---
-LOST_THRESHOLD = 3
 
 
 class AutoNavigator:
@@ -147,6 +130,14 @@ class AutoNavigator:
         self._zone_history: list[str] = []
         self._oscillating = False
 
+        # Return-to-base mission state
+        self._qr = cv2.QRCodeDetector()
+        self._watering_count = 0          # completed watering events this run
+        self._returning = False           # True once heading home for the base
+        self._base_lock = threading.Lock()
+        # Latest base QR sighting: {"box", "payload", "w", "h"} or None
+        self._latest_base: dict | None = None
+
     # ------------------------------------------------------------------
     # Public read-only accessors used by the video stream / annotator
     # ------------------------------------------------------------------
@@ -177,6 +168,10 @@ class AutoNavigator:
         self._zone_history.clear()
         self._oscillating = False
         self._is_watering = False
+        self._watering_count = 0
+        self._returning = False
+        with self._base_lock:
+            self._latest_base = None
         self._watered_ids.clear()
         self._embed_cache.clear()
         if self.reid is not None:
@@ -229,18 +224,31 @@ class AutoNavigator:
                     break
                 continue
 
-            detections = self.detector.detect(frame)
-            SAQI_LEDS.detect(bool(detections))
-            self.update_detections(
-                detections, frame.shape[1], frame.shape[0], frame=frame
-            )
+            if self._returning:
+                # Mission's watering phase is done — hunt for the base QR
+                # instead of plants so the stream and navigator agree.
+                box, payload = self._detect_base(frame)
+                with self._base_lock:
+                    self._latest_base = (
+                        {"box": box, "payload": payload,
+                         "w": frame.shape[1], "h": frame.shape[0]}
+                        if box is not None else None
+                    )
+                SAQI_LEDS.detect(box is not None)
+                annotated = self._annotate_base(frame, box, payload)
+            else:
+                detections = self.detector.detect(frame)
+                SAQI_LEDS.detect(bool(detections))
+                self.update_detections(
+                    detections, frame.shape[1], frame.shape[0], frame=frame
+                )
+                annotated = self.detector.annotate_frame(
+                    frame,
+                    detections,
+                    watered_ids=self.watered_ids,
+                    watering=self.is_watering,
+                )
 
-            annotated = self.detector.annotate_frame(
-                frame,
-                detections,
-                watered_ids=self.watered_ids,
-                watering=self.is_watering,
-            )
             ok, jpeg = cv2.imencode(".jpg", annotated)
             if ok:
                 with self._annotated_lock:
@@ -255,6 +263,9 @@ class AutoNavigator:
     def start(self):
         if self.is_active:
             return
+        # Snapshot the latest user settings for this run (applies-on-Start).
+        from components import settings as runtime_settings
+        runtime_settings.apply_run_overrides()
         logger.info(NavLog.STARTING.value)
         self.motor.stop()
         self.pump.off()
@@ -473,6 +484,19 @@ class AutoNavigator:
         else:
             logger.info(NavLog.WATERING_COMPLETE_NO_ID.value)
 
+        # Count this watering event toward the mission target. The trigger is
+        # the number of times we have watered (not distinct plants), per the
+        # PLANTS_PER_RUN config knob.
+        self._watering_count += 1
+        logger.info(NavLog.WATERING_COUNT.value,
+                    self._watering_count, PLANTS_PER_RUN)
+        if PLANTS_PER_RUN > 0 and self._watering_count >= PLANTS_PER_RUN:
+            self._returning = True
+            with self._base_lock:
+                self._latest_base = None
+            logger.info(NavLog.ALL_PLANTS_WATERED.value,
+                        PLANTS_PER_RUN, BASE_QR_PAYLOAD)
+
         # Capture several appearance embeddings (multi-view) so the same
         # physical plant is recognised later from a very different angle —
         # e.g. after the robot turns ~180° and comes back. The robot is
@@ -584,6 +608,112 @@ class AutoNavigator:
         return self._wait_for_detections(SLEEP_WAIT_YOLO)
 
     # ------------------------------------------------------------------
+    # Phase: return to base (QR code)
+    # ------------------------------------------------------------------
+
+    def _detect_base(self, frame) -> tuple[list[float] | None, str | None]:
+        """Detect + decode a QR code in ``frame``.
+
+        Returns ``([x1, y1, x2, y2], payload)`` when a QR whose decoded text
+        matches BASE_QR_PAYLOAD is found, otherwise ``(None, None)``.
+        """
+        if frame is None:
+            return None, None
+        try:
+            data, points, _ = self._qr.detectAndDecode(frame)
+        except cv2.error:
+            return None, None
+        if not data or points is None:
+            return None, None
+        if BASE_QR_PAYLOAD and data != BASE_QR_PAYLOAD:
+            return None, None
+        pts = points.reshape(-1, 2)
+        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+        return [x1, y1, x2, y2], data
+
+    def _annotate_base(self, frame, box, payload):
+        """Draw the base QR box / a 'returning to base' banner on the stream."""
+        annotated = frame.copy()
+        h, w = annotated.shape[:2]
+        cv2.rectangle(annotated, (0, 0), (w, 50), (0, 0, 0), -1)
+        banner = (f"RETURNING TO BASE — '{payload}'" if box is not None
+                  else "RETURNING TO BASE — searching for QR...")
+        cv2.putText(annotated, banner, (15, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+        if box is not None:
+            x1, y1, x2, y2 = [int(v) for v in box]
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 200, 255), 3)
+            cv2.putText(annotated, "BASE", (x1, max(65, y1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+        return annotated
+
+    def _scan_for_base(self):
+        """Rotate toward the side the base was last seen, then settle so the
+        inference loop can grab a fresh QR read. Searches indefinitely."""
+        direction = self._last_known_zone
+        logger.info(NavLog.RETURN_SCANNING.value, direction, BASE_QR_PAYLOAD)
+        if direction == "RIGHT":
+            self.motor.right(AUTO_SPEED_TURN)
+        else:
+            self.motor.left(AUTO_SPEED_TURN)
+        if self._sleep(SCAN_TURN_DURATION):
+            self.motor.stop()
+            return
+        self.motor.stop()
+        self._sleep(SLEEP_WAIT_YOLO)
+
+    def _step_return_to_base(self) -> bool:
+        """One step of the drive-home behaviour. Returns True once the robot
+        has arrived at the base (mission complete)."""
+        with self._base_lock:
+            base = self._latest_base
+
+        # Base not in view → scan for it (forever, per design).
+        if base is None:
+            self._scan_for_base()
+            return False
+
+        box, w, h = base["box"], base["w"], base["h"]
+        x1, y1, x2, y2 = box
+        obj_center_x = (x1 + x2) / 2.0
+        zone = self._get_zone(obj_center_x, w)
+        self._last_known_zone = "LEFT" if obj_center_x < w / 2.0 else "RIGHT"
+
+        frame_area = w * h
+        area_ratio = ((x2 - x1) * (y2 - y1)) / frame_area if frame_area > 0 else 0.0
+        logger.info(NavLog.BASE_DETECTED.value, base["payload"], zone, area_ratio)
+
+        # Arrived?
+        if zone == "CENTER" and area_ratio >= BASE_ARRIVAL_AREA_RATIO:
+            self.motor.stop()
+            logger.info(NavLog.ARRIVED_BASE.value, base["payload"], area_ratio)
+            self.is_active = False
+            return True
+
+        if zone == "LEFT":
+            logger.info(NavLog.BASE_TURN.value, "LEFT", "left",
+                        AUTO_SPEED_TURN, MOVE_TURN_DURATION)
+            self.motor.left(AUTO_SPEED_TURN)
+            if self._sleep(MOVE_TURN_DURATION):
+                return False
+        elif zone == "RIGHT":
+            logger.info(NavLog.BASE_TURN.value, "RIGHT", "right",
+                        AUTO_SPEED_TURN, MOVE_TURN_DURATION)
+            self.motor.right(AUTO_SPEED_TURN)
+            if self._sleep(MOVE_TURN_DURATION):
+                return False
+        else:
+            logger.info(NavLog.BASE_APPROACH.value, area_ratio, BASE_ARRIVAL_AREA_RATIO)
+            self.motor.forward(AUTO_SPEED_FORWARD)
+            if self._sleep(MOVE_FORWARD_DURATION):
+                return False
+
+        self.motor.stop()
+        self._sleep(SLEEP_WAIT_YOLO)   # let the inference loop grab a fresh QR
+        return False
+
+    # ------------------------------------------------------------------
     # Obstacle avoidance
     # ------------------------------------------------------------------
 
@@ -622,8 +752,8 @@ class AutoNavigator:
             return True
 
         self.motor.stop()
-        if self.ultrasonic is not None:
-            self.ultrasonic.scan()
+        # No re-scan here: the SCAN at the top of this method already re-centred
+        # the servo, so another ~2s sweep would only add latency.
         return self._wait_for_detections(SLEEP_WAIT_YOLO)
 
     # ------------------------------------------------------------------
@@ -636,6 +766,12 @@ class AutoNavigator:
                 if self._obstacle_detected():
                     if self._avoid_obstacle():
                         break
+                    continue
+
+                # Mission complete watering — drive home to the base QR.
+                if self._returning:
+                    if self._step_return_to_base():
+                        break          # arrived at base; end the mission
                     continue
 
                 # 1. Snapshot latest unwatered detections
@@ -674,6 +810,11 @@ class AutoNavigator:
                         self._do_watering(best)
                         if not self.is_active:
                             break
+
+                        # Mission target reached — skip the plant retreat and
+                        # let the loop top take over the return-to-base drive.
+                        if self._returning:
+                            continue
 
                         # Retreat and look for the next unwatered plant
                         if self._retreat_and_search(best.get("id"), best.get("box")):
@@ -742,4 +883,6 @@ class AutoNavigator:
             if self.ultrasonic is not None:
                 self.ultrasonic.set_auto_active(False)
             self.is_active = False
+            SAQI_LEDS.detect(False)
+            SAQI_LEDS.mode(LEDState.MANUAL)
             logger.info(NavLog.LOOP_EXITED.value)

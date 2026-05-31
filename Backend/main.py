@@ -19,7 +19,7 @@ from components.motor import MotorController
 from components.reid import PlantReID
 from components.ultrasonic import UltrasonicSensor
 from components.waterpump import WaterPumpController
-from routes import ai, camera, motor, ptz, pump, root
+from routes import ai, camera, motor, ptz, pump, root, settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -140,3 +140,4 @@ app.include_router(camera.router)
 app.include_router(ptz.router)
 app.include_router(pump.router)
 app.include_router(ai.router)
+app.include_router(settings.router)

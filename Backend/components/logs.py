@@ -84,3 +84,11 @@ class NavLog(Enum):
     SCAN_TARGET_ACQUIRED = "Auto: target acquired after scan; stopping to re-evaluate"
     OBSTACLE_AVOIDANCE = "Auto: obstacle detected; avoiding to the %s"
     LOOP_EXITED = "AutoNavigator loop exited; cleanup complete"
+    # --- Return-to-base mission ---
+    WATERING_COUNT = "Auto: watering event %d of %d complete"
+    ALL_PLANTS_WATERED = "Auto: all %d plant(s) watered — returning to base (QR '%s')"
+    RETURN_SCANNING = "Auto: base not in view; scanning %s for base QR '%s'"
+    BASE_DETECTED = "Auto: base QR '%s' detected; zone=%s area=%.2f"
+    BASE_TURN = "Auto: base %s -> turning %s (speed=%.2f, %.1fs)"
+    BASE_APPROACH = "Auto: base CENTER -> approaching (area=%.2f/%.2f)"
+    ARRIVED_BASE = "Auto: ARRIVED at base QR '%s' (area=%.2f) — mission complete"

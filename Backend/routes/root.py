@@ -14,6 +14,7 @@ def index():
             "motor": ["/motor/move?direction=forward&speed=0.8", "/motor/stop"],
             "pump": ["/pump/on", "/pump/off", "/pump/status"],
             "ai": ["/ai/detect"],
+            "settings": ["/settings", "/settings/ui", "/settings/reset"],
             "ptz": [
                 "/camera/ptz/pan?angle=45",
                 "/camera/ptz/tilt?angle=-10",

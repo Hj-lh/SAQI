@@ -1,2 +1,7 @@
 # Agent / planning workspace — never publish
 .claude/
+.agents/
+
+# Runtime settings written by the settings UI (machine-local overrides)
+runtime_settings.json
+Backend/runtime_settings.json
