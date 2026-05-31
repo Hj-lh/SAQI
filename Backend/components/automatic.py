@@ -73,6 +73,10 @@ from components.config import (
 from components.logs import NavLog
 logger = logging.getLogger(__name__)
 
+# Safety: if the camera produces no frames for this long, the navigator holds
+# (stops the motors) instead of driving or scanning blind.
+CAMERA_STALE_SECONDS = 3.0
+
 
 class AutoNavigator:
     def __init__(
@@ -130,6 +134,10 @@ class AutoNavigator:
         self._zone_history: list[str] = []
         self._oscillating = False
 
+        # Camera liveness — set by the inference loop on every good frame
+        self._last_frame_time = 0.0
+        self._camera_warned = False
+
         # Return-to-base mission state
         self._qr = cv2.QRCodeDetector()
         self._watering_count = 0          # completed watering events this run
@@ -168,6 +176,8 @@ class AutoNavigator:
         self._zone_history.clear()
         self._oscillating = False
         self._is_watering = False
+        self._last_frame_time = time.monotonic()
+        self._camera_warned = False
         self._watering_count = 0
         self._returning = False
         with self._base_lock:
@@ -223,6 +233,10 @@ class AutoNavigator:
                 if self._stop_event.wait(timeout=0.05):
                     break
                 continue
+
+            # Mark the feed as alive so the navigation loop knows it can trust
+            # detections (and won't drive/scan blind if the camera drops).
+            self._last_frame_time = time.monotonic()
 
             if self._returning:
                 # Mission's watering phase is done — hunt for the base QR
@@ -320,6 +334,10 @@ class AutoNavigator:
     def _sleep(self, duration: float) -> bool:
         """Interruptible sleep. Returns True if we should stop."""
         return self._stop_event.wait(timeout=duration)
+
+    def _camera_alive(self) -> bool:
+        """True if the inference loop has produced a frame recently."""
+        return (time.monotonic() - self._last_frame_time) < CAMERA_STALE_SECONDS
 
     def _wait_for_detections(self, timeout: float) -> bool:
         """Wait for new detections OR timeout. Returns True if stop requested."""
@@ -767,6 +785,20 @@ class AutoNavigator:
                     if self._avoid_obstacle():
                         break
                     continue
+
+                # Camera dropped out — hold still instead of driving/scanning
+                # blind. Resumes automatically when frames come back.
+                if not self._camera_alive():
+                    self.motor.stop()
+                    if not self._camera_warned:
+                        logger.warning(NavLog.CAMERA_STALE.value, CAMERA_STALE_SECONDS)
+                        self._camera_warned = True
+                    if self._wait_for_detections(SLEEP_WAIT_YOLO):
+                        break
+                    continue
+                if self._camera_warned:
+                    logger.info(NavLog.CAMERA_BACK.value)
+                    self._camera_warned = False
 
                 # Mission complete watering — drive home to the base QR.
                 if self._returning:

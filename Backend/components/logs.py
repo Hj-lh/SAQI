@@ -84,6 +84,8 @@ class NavLog(Enum):
     SCAN_TARGET_ACQUIRED = "Auto: target acquired after scan; stopping to re-evaluate"
     OBSTACLE_AVOIDANCE = "Auto: obstacle detected; avoiding to the %s"
     LOOP_EXITED = "AutoNavigator loop exited; cleanup complete"
+    CAMERA_STALE = "Auto: no camera frames for %.1fs — holding (motors stopped) until the feed returns"
+    CAMERA_BACK = "Auto: camera frames resumed — navigation continuing"
     # --- Return-to-base mission ---
     WATERING_COUNT = "Auto: watering event %d of %d complete"
     ALL_PLANTS_WATERED = "Auto: all %d plant(s) watered — returning to base (QR '%s')"
