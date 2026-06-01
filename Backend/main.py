@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app_state import app_state
 from components.ai import PlantDetector
 from components.automatic import AutoNavigator
+from components.buzzer import BuzzerController
 from components.camera import RobotCamera
 from components.camera_control import CameraPTZController
 from components.leds import LEDState, SAQI_LEDS
@@ -52,7 +53,8 @@ def _camera_has_frame(timeout_seconds: float = 5.0) -> bool:
 def _initialize_components() -> None:
     app_state.motor = MotorController()
     app_state.camera = RobotCamera()
-    app_state.pump = WaterPumpController()
+    app_state.buzzer = BuzzerController()
+    app_state.pump = WaterPumpController(buzzer=app_state.buzzer)
     app_state.ai = PlantDetector()
 
     try:
@@ -62,7 +64,7 @@ def _initialize_components() -> None:
         app_state.ptz = None
 
     app_state.reid = PlantReID()
-    app_state.ultrasonic = UltrasonicSensor()
+    app_state.ultrasonic = UltrasonicSensor(buzzer=app_state.buzzer)
     app_state.ultrasonic.start()
     app_state.navigator = AutoNavigator(
         app_state.motor,
@@ -72,6 +74,7 @@ def _initialize_components() -> None:
         ptz=app_state.ptz,
         reid=app_state.reid,
         ultrasonic=app_state.ultrasonic,
+        buzzer=app_state.buzzer,
     )
 
 
@@ -86,6 +89,8 @@ def _shutdown_components() -> None:
         app_state.camera.close()
     if app_state.pump is not None:
         app_state.pump.close()
+    if app_state.buzzer is not None:
+        app_state.buzzer.close()
     if app_state.ai is not None:
         app_state.ai.close()
     if app_state.ptz is not None:

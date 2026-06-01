@@ -202,6 +202,7 @@ SECTIONS = [
             _f("MOTOR_RIGHT_EN_PIN1", "Right motor EN pin 2", "BCM GPIO.", "int", scope="readonly"),
             _f("PUMP_PIN", "Pump relay pin", "BCM GPIO.", "int", scope="readonly"),
             _f("PUMP_ACTIVE_HIGH", "Pump active-high", "Relay polarity.", "bool", scope="readonly"),
+            _f("BUZZER_PIN", "Passive buzzer pin", "BCM GPIO PWM output.", "int", scope="readonly"),
             _f("LED_PIN", "LED data pin", "BCM GPIO for the WS2812 strip.", "int", scope="readonly"),
             _f("LED_COUNT", "LED count", "Number of status LEDs.", "int", scope="readonly"),
             _f("LED_BRIGHTNESS", "LED brightness", "0.0–1.0.", "float", scope="readonly"),

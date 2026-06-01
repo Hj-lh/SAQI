@@ -31,6 +31,17 @@ class PumpLog(Enum):
     CLOSED = "WaterPumpController closed"
 
 
+class BuzzerLog(Enum):
+    INITIALISED = "BuzzerController initialised (GPIO%d)"
+    DISABLED = "BuzzerController disabled (%s) - system continues without buzzer audio"
+    PUMP_ACTIVE = "Buzzer pump cue active=%s"
+    MODE_CHANGED = "Buzzer mode cue: %s"
+    COLLISION_ALARM = "Buzzer collision alarm: front=%.1f cm, sounding for %.1fs"
+    COLLISION_SILENCED = "Buzzer collision alarm timed out; quiet until distance reset"
+    WRITE_FAILED = "Buzzer GPIO write failed (%s); disabling buzzer audio"
+    CLOSED = "BuzzerController closed"
+
+
 class CameraLog(Enum):
     INITIALISED = "RobotCamera initialised (source=%s)"
     CLOSED = "RobotCamera closed"

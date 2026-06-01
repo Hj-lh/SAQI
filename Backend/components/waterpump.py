@@ -19,8 +19,14 @@ logger = logging.getLogger(__name__)
 class WaterPumpController:
     """Simple on/off controller for a relay-driven water pump."""
 
-    def __init__(self, pin: int = PUMP_PIN, active_high: bool = PUMP_ACTIVE_HIGH):
+    def __init__(
+        self,
+        pin: int = PUMP_PIN,
+        active_high: bool = PUMP_ACTIVE_HIGH,
+        buzzer=None,
+    ):
         self.relay = OutputDevice(pin, active_high=active_high, initial_value=False)
+        self.buzzer = buzzer
         self._is_on = False
         logger.info(
             PumpLog.INITIALISED.value,
@@ -37,6 +43,8 @@ class WaterPumpController:
         self._is_on = True
         logger.info(PumpLog.ON.value)
         SAQI_LEDS.watering(True)
+        if self.buzzer is not None:
+            self.buzzer.set_pump_active(True)
 
     def off(self):
         """Turn the water pump OFF."""
@@ -44,6 +52,8 @@ class WaterPumpController:
         self._is_on = False
         logger.info(PumpLog.OFF.value)
         SAQI_LEDS.watering(False)
+        if self.buzzer is not None:
+            self.buzzer.set_pump_active(False)
 
     @property
     def is_on(self) -> bool:

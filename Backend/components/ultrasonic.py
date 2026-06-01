@@ -33,10 +33,12 @@ class UltrasonicSensor:
         port: str = ULTRASONIC_SERIAL_PORT,
         baud: int = ULTRASONIC_SERIAL_BAUD,
         timeout: float = ULTRASONIC_SERIAL_TIMEOUT,
+        buzzer=None,
     ):
         self.port = port
         self.baud = baud
         self.timeout = timeout
+        self.buzzer = buzzer
         self.enabled = False
         self._serial = None
         self._serial_lock = threading.Lock()
@@ -165,6 +167,8 @@ class UltrasonicSensor:
                 auto_active = self._auto_active
 
             SAQI_LEDS.ultrasonic(obstacle)
+            if self.buzzer is not None:
+                self.buzzer.update_distance(cm)
 
             # Log every poll so the live distance is always visible.
             if cm is not None:
@@ -194,6 +198,8 @@ class UltrasonicSensor:
             self._thread.join(timeout=2.0)
             self._thread = None
         self._command("CENTER")
+        if self.buzzer is not None:
+            self.buzzer.update_distance(None)
         try:
             SAQI_LEDS.ultrasonic(False)
         except Exception:  # noqa: BLE001

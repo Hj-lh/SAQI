@@ -19,6 +19,7 @@ Backend/
 │   ├── reid.py            # MobileNet-V3 multi-view appearance Re-ID
 │   ├── motor.py           # Differential-drive motor control (2× BTS7960, PWM)
 │   ├── waterpump.py       # Relay-driven water pump
+│   ├── buzzer.py          # Passive-buzzer audio cues (GPIO PWM)
 │   ├── automatic.py       # Autonomous navigation + inference loop
 │   └── .env               # AI config (TARGET_CLASS, tracking toggle)
 ├── ai_models/             # YOLO weights (.pt / .onnx / ncnn)
@@ -65,6 +66,18 @@ only.
 | Function   | GPIO | Notes                                            |
 |------------|------|--------------------------------------------------|
 | Pump relay | 25   | **Active-LOW** relay, starts OFF (`initial_value=False`) |
+
+### Passive buzzer
+
+| Function      | GPIO | Notes                                      |
+|---------------|------|--------------------------------------------|
+| Buzzer signal | 24   | PWM output for a passive buzzer; other lead to GND |
+
+The buzzer plays an alternating watering tune while the pump runs, rising or
+falling chirps when automatic mode is enabled or disabled, and faster,
+higher-pitched proximity beeps below 35 cm. At 17 cm or closer it sounds an
+urgent alarm for five seconds, then stays quiet until the reading exceeds
+20 cm so close-range testing does not keep making noise.
 
 ### Status LEDs (WS2812 / NeoPixel, 8 LEDs)
 

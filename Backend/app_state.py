@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from components.ai import PlantDetector
     from components.automatic import AutoNavigator
+    from components.buzzer import BuzzerController
     from components.camera import RobotCamera
     from components.camera_control import CameraPTZController
     from components.motor import MotorController
@@ -26,6 +27,7 @@ class AppState:
     reid: PlantReID | None = None
     navigator: AutoNavigator | None = None
     ultrasonic: UltrasonicSensor | None = None
+    buzzer: BuzzerController | None = None
 
 
 app_state = AppState()

@@ -89,6 +89,7 @@ class AutoNavigator:
         ptz=None,                     # CameraPTZController | None
         reid: PlantReID | None = None,
         ultrasonic=None,
+        buzzer=None,
     ):
         self.motor = motor
         self.pump = pump
@@ -97,6 +98,7 @@ class AutoNavigator:
         self.ptz = ptz                # may be None if camera control unavailable
         self.reid = reid              # may be None if torchvision unavailable
         self.ultrasonic = ultrasonic
+        self.buzzer = buzzer
 
         self.is_active = False
         self._thread = None
@@ -298,6 +300,8 @@ class AutoNavigator:
         )
         self._infer_thread.start()
         SAQI_LEDS.mode(LEDState.AUTO)
+        if self.buzzer is not None:
+            self.buzzer.set_auto_active(True)
 
     def stop(self):
         if not self.is_active:
@@ -320,6 +324,8 @@ class AutoNavigator:
             self.ultrasonic.set_auto_active(False)
         SAQI_LEDS.detect(False)
         SAQI_LEDS.mode(LEDState.MANUAL)
+        if self.buzzer is not None:
+            self.buzzer.set_auto_active(False)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -963,4 +969,6 @@ class AutoNavigator:
             self.is_active = False
             SAQI_LEDS.detect(False)
             SAQI_LEDS.mode(LEDState.MANUAL)
+            if self.buzzer is not None:
+                self.buzzer.set_auto_active(False)
             logger.info(NavLog.LOOP_EXITED.value)
