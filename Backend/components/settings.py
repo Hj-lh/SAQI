@@ -9,6 +9,8 @@ Two scopes:
   - ``run``      : behaviour/tuning read by the AutoNavigator. Overrides are
                    applied (re-bound onto the running modules) when an auto run
                    starts, via :func:`apply_run_overrides`. Editable in the UI.
+  - ``live``     : behaviour applied immediately when changed in the settings
+                   UI, and restored at process startup. Editable in the UI.
   - ``readonly`` : hardware/wiring read once at process startup. Shown in the
                    UI for reference only; changing them means editing
                    ``config.py`` and restarting the backend.
@@ -138,6 +140,25 @@ SECTIONS = [
         ],
     },
     {
+        "id": "buzzer",
+        "title": "Buzzer / watering music",
+        "desc": "Choose the passive-buzzer melody played while the pump runs. "
+                "These controls apply immediately.",
+        "fields": [
+            _f("BUZZER_WATER_MUSIC_ENABLED", "Play watering music",
+               "Play the selected melody while watering. When disabled, the "
+               "simpler interval watering beep remains active.",
+               "bool", scope="live"),
+            _f("BUZZER_WATER_SONG", "Watering song",
+               "Melody played while the pump is on.",
+               "str", scope="live",
+               options=[
+                   {"value": key, "label": song["label"]}
+                   for key, song in config.BUZZER_WATER_SONGS.items()
+               ]),
+        ],
+    },
+    {
         "id": "reid",
         "title": "Plant memory (ReID)",
         "desc": "Appearance capture used so already-watered plants aren't "
@@ -215,7 +236,9 @@ SECTIONS = [
 
 # Flattened lookups
 _FIELDS = {f["key"]: f for s in SECTIONS for f in s["fields"]}
-_EDITABLE = {k for k, f in _FIELDS.items() if f["scope"] == "run"}
+_RUN_EDITABLE = {k for k, f in _FIELDS.items() if f["scope"] == "run"}
+_LIVE_EDITABLE = {k for k, f in _FIELDS.items() if f["scope"] == "live"}
+_EDITABLE = _RUN_EDITABLE | _LIVE_EDITABLE
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +269,13 @@ def _coerce(field: dict, value):
             value = max(field["min"], value)
         if "max" in field:
             value = min(field["max"], value)
+    if "options" in field:
+        choices = {
+            option["value"] if isinstance(option, dict) else option
+            for option in field["options"]
+        }
+        if value not in choices:
+            raise ValueError(f"{value!r} is not one of {sorted(choices)!r}")
     return value
 
 
@@ -305,6 +335,7 @@ def update(new_values: dict) -> dict:
         overrides = {k: v for k, v in overrides.items() if v != _default(k)}
         _save_overrides(overrides)
         logger.info("Settings updated: %s", ", ".join(sorted(new_values or {})) or "(none)")
+    apply_live_overrides()
     return effective()
 
 
@@ -318,6 +349,7 @@ def reset() -> dict:
                 logger.error("Failed to remove settings file: %s", exc)
                 _save_overrides({})
         logger.info("Settings reset to defaults")
+    apply_live_overrides()
     return effective()
 
 
@@ -344,10 +376,22 @@ def apply_run_overrides() -> None:
     from components import ultrasonic as _ultrasonic
     targets = (_automatic, _ultrasonic)
     applied = []
-    for key in _EDITABLE:
+    for key in _RUN_EDITABLE:
         value = eff[key]
         for mod in targets:
             if hasattr(mod, key):
                 setattr(mod, key, value)
                 applied.append(key)
     logger.info("Applied %d navigation setting(s) for this run", len(applied))
+
+
+def apply_live_overrides() -> None:
+    """Re-bind editable (``live`` scope) values onto the buzzer module."""
+    eff = effective()
+    from components import buzzer as _buzzer
+    applied = []
+    for key in _LIVE_EDITABLE:
+        if hasattr(_buzzer, key):
+            setattr(_buzzer, key, eff[key])
+            applied.append(key)
+    logger.info("Applied %d live buzzer setting(s)", len(applied))

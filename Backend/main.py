@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app_state import app_state
+from components import settings as runtime_settings
 from components.ai import PlantDetector
 from components.automatic import AutoNavigator
 from components.buzzer import BuzzerController
@@ -53,6 +54,7 @@ def _camera_has_frame(timeout_seconds: float = 5.0) -> bool:
 def _initialize_components() -> None:
     app_state.motor = MotorController()
     app_state.camera = RobotCamera()
+    runtime_settings.apply_live_overrides()
     app_state.buzzer = BuzzerController()
     app_state.pump = WaterPumpController(buzzer=app_state.buzzer)
     app_state.ai = PlantDetector()

@@ -29,14 +29,89 @@ PUMP_ACTIVE_HIGH = False
 BUZZER_PIN = 26
 BUZZER_DUTY_CYCLE = 0.5
 
-# Buzzer tunes. The distance warning speeds up and rises in pitch as an
-# obstacle approaches. At or below the collision distance, an urgent alarm
-# sounds for five seconds, then stays quiet until the obstacle moves away far
-# enough to re-arm it.
-BUZZER_WATER_LOW_HZ = 523
-BUZZER_WATER_HIGH_HZ = 659
-BUZZER_WATER_NOTE_SECONDS = 0.18
-BUZZER_WATER_GAP_SECONDS = 0.06
+# Buzzer tunes. Watering starts and stops with distinct cues, with a selected
+# song while the pump remains on. Set BUZZER_WATER_MUSIC_ENABLED to False to
+# keep the simpler interval beep instead. The distance warning speeds up and
+# rises in pitch as an obstacle approaches. At or below the collision distance,
+# a steady high alarm sounds for two seconds, then stays quiet until the
+# obstacle moves away far enough to re-arm it.
+BUZZER_WATER_ON_LOW_HZ = 659
+BUZZER_WATER_ON_HIGH_HZ = 988
+BUZZER_WATER_OFF_HIGH_HZ = 784
+BUZZER_WATER_OFF_LOW_HZ = 523
+BUZZER_WATER_BEEP_HZ = 659
+BUZZER_WATER_BEEP_SECONDS = 0.10
+BUZZER_WATER_INTERVAL = 0.75
+BUZZER_WATER_MUSIC_ENABLED = True
+BUZZER_WATER_SONG = "ode_to_joy"
+
+# Monophonic public-domain melodies for the passive buzzer. Each note is
+# (frequency_hz, beats); use None for a rest. The settings UI exposes these
+# keys as a dropdown while config.py stays the source of truth for defaults.
+BUZZER_WATER_SONGS = {
+    "ode_to_joy": {
+        "label": "Ode to Joy",
+        "beat_seconds": 0.18,
+        "notes": (
+            (659, 1), (659, 1), (698, 1), (784, 1),
+            (784, 1), (698, 1), (659, 1), (587, 1),
+            (523, 1), (523, 1), (587, 1), (659, 1),
+            (659, 1.5), (587, 0.5), (587, 2), (None, 1),
+            (659, 1), (659, 1), (698, 1), (784, 1),
+            (784, 1), (698, 1), (659, 1), (587, 1),
+            (523, 1), (523, 1), (587, 1), (659, 1),
+            (587, 1.5), (523, 0.5), (523, 2), (None, 2),
+        ),
+    },
+    "twinkle_twinkle": {
+        "label": "Twinkle, Twinkle, Little Star",
+        "beat_seconds": 0.20,
+        "notes": (
+            (523, 1), (523, 1), (784, 1), (784, 1),
+            (880, 1), (880, 1), (784, 2),
+            (698, 1), (698, 1), (659, 1), (659, 1),
+            (587, 1), (587, 1), (523, 2), (None, 2),
+        ),
+    },
+    "mary_had_a_little_lamb": {
+        "label": "Mary Had a Little Lamb",
+        "beat_seconds": 0.18,
+        "notes": (
+            (659, 1), (587, 1), (523, 1), (587, 1),
+            (659, 1), (659, 1), (659, 2),
+            (587, 1), (587, 1), (587, 2),
+            (659, 1), (784, 1), (784, 2),
+            (659, 1), (587, 1), (523, 1), (587, 1),
+            (659, 1), (659, 1), (659, 1), (659, 1),
+            (587, 1), (587, 1), (659, 1), (587, 1),
+            (523, 2), (None, 2),
+        ),
+    },
+    "happy_birthday": {
+        "label": "Happy Birthday",
+        "beat_seconds": 0.20,
+        "notes": (
+            (392, 0.75), (392, 0.25), (440, 1), (392, 1), (523, 1), (494, 2),
+            (392, 0.75), (392, 0.25), (440, 1), (392, 1), (587, 1), (523, 2),
+            (392, 0.75), (392, 0.25), (784, 1), (659, 1), (523, 1), (494, 1), (440, 2),
+            (698, 0.75), (698, 0.25), (659, 1), (523, 1), (587, 1), (523, 2),
+            (None, 2),
+        ),
+    },
+    "jingle_bells": {
+        "label": "Jingle Bells",
+        "beat_seconds": 0.16,
+        "notes": (
+            (659, 1), (659, 1), (659, 2),
+            (659, 1), (659, 1), (659, 2),
+            (659, 1), (784, 1), (523, 1), (587, 1), (659, 3),
+            (698, 1), (698, 1), (698, 1), (698, 1),
+            (698, 1), (659, 1), (659, 1), (659, 0.5), (659, 0.5),
+            (587, 1), (587, 1), (659, 1), (587, 2), (784, 2),
+            (None, 2),
+        ),
+    },
+}
 BUZZER_PROXIMITY_START_CM = 35.0
 BUZZER_COLLISION_CM = 17.0
 BUZZER_COLLISION_RESET_CM = 20.0
@@ -45,10 +120,8 @@ BUZZER_PROXIMITY_HIGH_HZ = 1400
 BUZZER_PROXIMITY_SLOW_INTERVAL = 0.8
 BUZZER_PROXIMITY_FAST_INTERVAL = 0.18
 BUZZER_PROXIMITY_BEEP_SECONDS = 0.08
-BUZZER_COLLISION_LOW_HZ = 1300
-BUZZER_COLLISION_HIGH_HZ = 1900
-BUZZER_COLLISION_NOTE_SECONDS = 0.10
-BUZZER_COLLISION_ALARM_SECONDS = 5.0
+BUZZER_COLLISION_HZ = 1900
+BUZZER_COLLISION_ALARM_SECONDS = 2.0
 
 # Status LEDs - WS2812 / NeoPixel strip.
 LED_PIN = 18

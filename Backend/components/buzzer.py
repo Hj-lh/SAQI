@@ -15,9 +15,7 @@ import time
 from components.config import (
     BUZZER_COLLISION_ALARM_SECONDS,
     BUZZER_COLLISION_CM,
-    BUZZER_COLLISION_HIGH_HZ,
-    BUZZER_COLLISION_LOW_HZ,
-    BUZZER_COLLISION_NOTE_SECONDS,
+    BUZZER_COLLISION_HZ,
     BUZZER_COLLISION_RESET_CM,
     BUZZER_DUTY_CYCLE,
     BUZZER_PIN,
@@ -27,10 +25,16 @@ from components.config import (
     BUZZER_PROXIMITY_LOW_HZ,
     BUZZER_PROXIMITY_SLOW_INTERVAL,
     BUZZER_PROXIMITY_START_CM,
-    BUZZER_WATER_GAP_SECONDS,
-    BUZZER_WATER_HIGH_HZ,
-    BUZZER_WATER_LOW_HZ,
-    BUZZER_WATER_NOTE_SECONDS,
+    BUZZER_WATER_BEEP_HZ,
+    BUZZER_WATER_BEEP_SECONDS,
+    BUZZER_WATER_INTERVAL,
+    BUZZER_WATER_MUSIC_ENABLED,
+    BUZZER_WATER_OFF_HIGH_HZ,
+    BUZZER_WATER_OFF_LOW_HZ,
+    BUZZER_WATER_ON_HIGH_HZ,
+    BUZZER_WATER_ON_LOW_HZ,
+    BUZZER_WATER_SONG,
+    BUZZER_WATER_SONGS,
 )
 from components.logs import BuzzerLog
 
@@ -58,9 +62,9 @@ class BuzzerController:
         self._distance_cm: float | None = None
         self._collision_deadline: float | None = None
         self._collision_silenced = False
-        self._mode_cues: deque[list[tuple[int | None, float]]] = deque()
-        self._water_high_note = False
-        self._collision_high_note = False
+        self._event_cues: deque[list[tuple[int | None, float]]] = deque()
+        self._song_name: str | None = None
+        self._song_note_index = 0
         self._thread = None
 
         try:
@@ -70,7 +74,7 @@ class BuzzerController:
                 device = PWMOutputDevice(
                     pin,
                     initial_value=0.0,
-                    frequency=BUZZER_WATER_LOW_HZ,
+                    frequency=BUZZER_WATER_BEEP_HZ,
                 )
             self._device = device
             self.enabled = True
@@ -87,12 +91,16 @@ class BuzzerController:
     # ------------------------------------------------------------------
 
     def set_pump_active(self, active: bool):
-        """Keep a gentle two-note loop playing while the water pump runs."""
+        """Play pump edge cues and keep a simple interval beep while it runs."""
         with self._lock:
             if self._pump_active == active:
                 return
             self._pump_active = active
+            self._song_note_index = 0
+            self._event_cues.append(self._pump_cue(active))
         logger.info(BuzzerLog.PUMP_ACTIVE.value, active)
+        if active and BUZZER_WATER_MUSIC_ENABLED:
+            logger.info(BuzzerLog.WATER_SONG.value, BUZZER_WATER_SONG)
         self._wake_event.set()
 
     def set_auto_active(self, active: bool):
@@ -101,7 +109,7 @@ class BuzzerController:
             if self._auto_active == active:
                 return
             self._auto_active = active
-            self._mode_cues.append(self._mode_cue(active))
+            self._event_cues.append(self._mode_cue(active))
         logger.info(BuzzerLog.MODE_CHANGED.value, "automatic" if active else "manual")
         self._wake_event.set()
 
@@ -135,16 +143,25 @@ class BuzzerController:
         notes = (880, 1175) if auto_active else (1175, 880)
         return [(notes[0], 0.09), (None, 0.04), (notes[1], 0.12)]
 
+    @staticmethod
+    def _pump_cue(active: bool) -> list[tuple[int | None, float]]:
+        notes = (
+            (BUZZER_WATER_ON_LOW_HZ, BUZZER_WATER_ON_HIGH_HZ)
+            if active
+            else (BUZZER_WATER_OFF_HIGH_HZ, BUZZER_WATER_OFF_LOW_HZ)
+        )
+        return [(notes[0], 0.10), (None, 0.04), (notes[1], 0.14), (None, 0.05)]
+
     def _loop(self):
         try:
             while not self._stop_event.is_set():
-                if self._collision_alarm_active():
-                    self._play_collision_step()
-                    continue
-
-                cue = self._next_mode_cue()
+                cue = self._next_event_cue()
                 if cue is not None:
                     self._play_pattern(cue)
+                    continue
+
+                if self._collision_alarm_active():
+                    self._play_collision_step()
                     continue
 
                 with self._lock:
@@ -153,7 +170,10 @@ class BuzzerController:
                     collision_silenced = self._collision_silenced
 
                 if pump_active:
-                    self._play_watering_step()
+                    if BUZZER_WATER_MUSIC_ENABLED:
+                        self._play_watering_song_step()
+                    else:
+                        self._play_watering_step()
                 elif (
                     distance_cm is not None
                     and BUZZER_COLLISION_CM < distance_cm < BUZZER_PROXIMITY_START_CM
@@ -177,11 +197,11 @@ class BuzzerController:
         logger.info(BuzzerLog.COLLISION_SILENCED.value)
         return False
 
-    def _next_mode_cue(self) -> list[tuple[int | None, float]] | None:
+    def _next_event_cue(self) -> list[tuple[int | None, float]] | None:
         with self._lock:
-            if not self._mode_cues:
+            if not self._event_cues:
                 return None
-            return self._mode_cues.popleft()
+            return self._event_cues.popleft()
 
     def _play_pattern(self, notes: list[tuple[int | None, float]]):
         for frequency, duration in notes:
@@ -192,21 +212,35 @@ class BuzzerController:
                 return
 
     def _play_watering_step(self):
-        self._water_high_note = not self._water_high_note
-        frequency = BUZZER_WATER_HIGH_HZ if self._water_high_note else BUZZER_WATER_LOW_HZ
-        self._tone(frequency)
-        if self._wait(BUZZER_WATER_NOTE_SECONDS, interruptible=False):
+        self._tone(BUZZER_WATER_BEEP_HZ)
+        if self._wait(BUZZER_WATER_BEEP_SECONDS, interruptible=False):
             return
         self._tone(None)
-        self._wait(BUZZER_WATER_GAP_SECONDS)
+        self._wait(max(0.01, BUZZER_WATER_INTERVAL - BUZZER_WATER_BEEP_SECONDS))
+
+    def _play_watering_song_step(self):
+        song_name = (
+            BUZZER_WATER_SONG
+            if BUZZER_WATER_SONG in BUZZER_WATER_SONGS
+            else "ode_to_joy"
+        )
+        song = BUZZER_WATER_SONGS[song_name]
+        notes = song["notes"]
+        with self._lock:
+            if self._song_name != song_name:
+                self._song_name = song_name
+                self._song_note_index = 0
+            frequency, beats = notes[self._song_note_index]
+            self._song_note_index = (self._song_note_index + 1) % len(notes)
+        self._tone(frequency)
+        self._wait(max(0.01, beats * song["beat_seconds"]), interruptible=False)
 
     def _play_collision_step(self):
-        self._collision_high_note = not self._collision_high_note
-        frequency = (
-            BUZZER_COLLISION_HIGH_HZ if self._collision_high_note else BUZZER_COLLISION_LOW_HZ
-        )
-        self._tone(frequency)
-        self._wait(BUZZER_COLLISION_NOTE_SECONDS)
+        self._tone(BUZZER_COLLISION_HZ)
+        with self._lock:
+            deadline = self._collision_deadline
+        remaining = max(0.0, deadline - time.monotonic()) if deadline is not None else 0.0
+        self._wait(remaining)
 
     def _play_proximity_step(self, cm: float):
         span = BUZZER_PROXIMITY_START_CM - BUZZER_COLLISION_CM

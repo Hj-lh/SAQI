@@ -305,6 +305,8 @@ class AutoNavigator:
 
     def stop(self):
         if not self.is_active:
+            if self.buzzer is not None:
+                self.buzzer.set_auto_active(False)
             return
         logger.info(NavLog.STOPPING.value)
         self.is_active = False

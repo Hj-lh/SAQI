@@ -60,9 +60,9 @@ _PAGE = """<!doctype html>
   .field:first-of-type { border-top: none; }
   .field label { font-weight: 500; }
   .field .help { grid-column: 1 / -1; font-size: .8rem; opacity: .7; margin: 0; }
-  .field input { font: inherit; padding: .4rem .5rem; border-radius: .4rem;
+  .field input, .field select { font: inherit; padding: .4rem .5rem; border-radius: .4rem;
                  border: 1px solid #8886; width: 100%; background: Field; color: FieldText; }
-  .field input:disabled { opacity: .6; }
+  .field input:disabled, .field select:disabled { opacity: .6; }
   .field .def { grid-column: 1 / -1; font-size: .72rem; opacity: .55; }
   .ro { font-size: .72rem; opacity: .6; font-weight: 400; }
   #msg { font-size: .9rem; }
@@ -77,8 +77,9 @@ _PAGE = """<!doctype html>
     <button class="secondary" onclick="restore()">Restore defaults</button>
     <button onclick="save()">Save</button>
   </div>
-  <p class="sdesc">Editable values apply the next time you press <b>Start</b> on
-  an auto run. The hardware section is read-only.</p>
+  <p class="sdesc">Navigation values apply the next time you press <b>Start</b>
+  on an auto run. Buzzer settings apply immediately. The hardware section is
+  read-only.</p>
   <div id="form"></div>
 
 <script>
@@ -103,7 +104,7 @@ function render(){
     d.innerHTML = `<summary>${esc(sec.title)}</summary>
       <p class="sdesc">${esc(sec.desc)}</p>`;
     sec.fields.forEach(f => {
-      const ro = f.scope !== 'run';
+      const ro = f.scope === 'readonly';
       const div = document.createElement('div');
       div.className = 'field';
       const inputType = (f.type === 'int' || f.type === 'float') ? 'number'
@@ -112,10 +113,15 @@ function render(){
       const checked = (f.type === 'bool' && f.value) ? 'checked' : '';
       const val = f.type === 'bool' ? '' : `value="${esc(f.value)}"`;
       const rng = (f.min!==undefined?`min="${f.min}" `:'') + (f.max!==undefined?`max="${f.max}" `:'');
+      const control = f.options
+        ? `<select id="f_${f.key}" data-key="${f.key}" data-type="${f.type}" ${ro?'disabled':''}>
+             ${f.options.map(o => `<option value="${esc(o.value)}" ${o.value===f.value?'selected':''}>${esc(o.label)}</option>`).join('')}
+           </select>`
+        : `<input id="f_${f.key}" data-key="${f.key}" data-type="${f.type}"
+               type="${inputType}" step="${step}" ${rng} ${val} ${checked} ${ro?'disabled':''}>`;
       div.innerHTML = `
         <label for="f_${f.key}">${esc(f.label)} ${ro?'<span class="ro">(read-only)</span>':''}</label>
-        <input id="f_${f.key}" data-key="${f.key}" data-type="${f.type}"
-               type="${inputType}" step="${step}" ${rng} ${val} ${checked} ${ro?'disabled':''}>
+        ${control}
         <p class="help">${esc(f.help)}</p>
         <p class="def">default: ${esc(f.default)}</p>`;
       d.appendChild(div);
@@ -126,7 +132,7 @@ function render(){
 
 function collect(){
   const out = {};
-  document.querySelectorAll('#form input:not(:disabled)').forEach(inp => {
+  document.querySelectorAll('#form input:not(:disabled), #form select:not(:disabled)').forEach(inp => {
     const t = inp.dataset.type;
     out[inp.dataset.key] = (t === 'bool') ? inp.checked
                           : (t === 'int' || t === 'float') ? Number(inp.value)

@@ -71,13 +71,19 @@ only.
 
 | Function      | GPIO | Notes                                      |
 |---------------|------|--------------------------------------------|
-| Buzzer signal | 24   | PWM output for a passive buzzer; other lead to GND |
+| Buzzer signal | 26   | PWM output for a passive buzzer; other lead to GND |
 
-The buzzer plays an alternating watering tune while the pump runs, rising or
-falling chirps when automatic mode is enabled or disabled, and faster,
-higher-pitched proximity beeps below 35 cm. At 17 cm or closer it sounds an
-urgent alarm for five seconds, then stays quiet until the reading exceeds
-20 cm so close-range testing does not keep making noise.
+The buzzer plays distinct pump-on and pump-off cues with a watering melody,
+rising or falling chirps when automatic mode is enabled or disabled, and
+faster, higher-pitched proximity beeps below 35 cm. At 17 cm or closer it
+sounds a steady high alarm for two seconds, then stays quiet until the reading
+exceeds 20 cm so close-range testing does not keep making noise.
+
+`Ode to Joy` is the default watering song. The settings UI at `/settings/ui`
+can switch live between `Ode to Joy`, `Twinkle, Twinkle, Little Star`,
+`Mary Had a Little Lamb`, `Happy Birthday`, and `Jingle Bells`. Turning
+watering music off restores the simpler interval beep. Edit the
+`BUZZER_WATER_*` defaults and melody catalog in `components/config.py`.
 
 ### Status LEDs (WS2812 / NeoPixel, 8 LEDs)
 
@@ -144,6 +150,7 @@ USE_YOLO_WITH_TRACK=True      # ByteTrack tracking (code currently forces ON)
 | Default YOLO model| `components/ai.py`             | `ai_models/yolo26n.onnx`                         |
 | ReID similarity   | `components/reid.py`           | `0.82` cosine (top-2 mean)                       |
 | Nav tuning consts | `components/automatic.py`      | speeds, scan steps, settle times (top of file)   |
+| Buzzer melodies   | `components/config.py`         | `Ode to Joy` while watering                      |
 
 If the PTZ camera is unreachable at startup, PTZ disables itself (logs a
 warning) and the navigator degrades to motor-only scanning — the rest of the
