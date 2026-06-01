@@ -26,7 +26,7 @@ PUMP_PIN = 25
 PUMP_ACTIVE_HIGH = False
 
 # Passive buzzer - direct GPIO PWM output.
-BUZZER_PIN = 24
+BUZZER_PIN = 26
 BUZZER_DUTY_CYCLE = 0.5
 
 # Buzzer tunes. The distance warning speeds up and rises in pitch as an
