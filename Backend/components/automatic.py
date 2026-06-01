@@ -20,10 +20,12 @@ State machine:
   TRACKING    → target in center    → APPROACHING
   TRACKING    → target left/right   → TURNING (short)
   TRACKING    → target lost briefly → HOLDING
-  APPROACHING → box large enough    → WATERING
-  WATERING    → done                → RETREATING (watch for next plant)
-  RETREATING  → new target found    → TRACKING
-  RETREATING  → nothing seen        → SCANNING
+  APPROACHING → centered box large enough → ULTRASONIC_HANDOFF
+  ULTRASONIC_HANDOFF → distance close enough → WATERING
+  WATERING    → done                → POST_WATER_REVERSING
+  POST_WATER_REVERSING → quota met  → RETURNING
+  POST_WATER_REVERSING → new target → TRACKING
+  POST_WATER_REVERSING → no target  → SCANNING
   HOLDING     → target reappears    → TRACKING
   HOLDING     → lost too long       → SCANNING
 """
@@ -47,7 +49,11 @@ from components.config import (
     ULTRASONIC_AVOID_FORWARD_SECONDS,
     ULTRASONIC_AVOID_SPEED,
     ULTRASONIC_AVOID_TURN_SECONDS,
-    WATER_DISTANCE_CM,
+    ULTRASONIC_WATER_DISTANCE_CM,
+    WATER_HANDOFF_FORWARD_SECONDS,
+    WATER_HANDOFF_FORWARD_SPEED,
+    WATER_HANDOFF_TIMEOUT_SECONDS,
+    YOLO_WATER_HANDOFF_AREA_RATIO,
     PLANTS_PER_RUN,
     BASE_QR_PAYLOAD,
     BASE_ARRIVAL_AREA_RATIO,
@@ -67,10 +73,10 @@ from components.config import (
     REID_CAPTURE_SAMPLES,
     REID_CAPTURE_INTERVAL,
     REID_RETREAT_INTERVAL,
-    CENTER_MARGIN,
+    YOLO_CENTER_SIDE_MARGIN,
     ARRIVAL_AREA_RATIO,
     WATERING_DURATION,
-    RETREAT_DURATION,
+    POST_WATER_REVERSE_SECONDS,
     RETREAT_POLL_PERIOD,
     LOST_THRESHOLD,
 )
@@ -136,6 +142,8 @@ class AutoNavigator:
         self._frames_without_target = 0
         self._last_known_zone: str = "LEFT"
         self._just_finished_scan: bool = False  # Prevents double-turn after scan
+        self._watering_handoff_target: dict | None = None
+        self._watering_handoff_deadline = 0.0
 
         # Oscillation detection
         self._zone_history: list[str] = []
@@ -183,6 +191,8 @@ class AutoNavigator:
         self._frames_without_target = 0
         self._last_known_zone = "LEFT"
         self._just_finished_scan = False
+        self._watering_handoff_target = None
+        self._watering_handoff_deadline = 0.0
         self._zone_history.clear()
         self._oscillating = False
         self._is_watering = False
@@ -356,9 +366,9 @@ class AutoNavigator:
     # ------------------------------------------------------------------
 
     def _get_zone(self, obj_center_x: float, width: int) -> str:
-        if obj_center_x < width * CENTER_MARGIN:
+        if obj_center_x < width * YOLO_CENTER_SIDE_MARGIN:
             return "LEFT"
-        if obj_center_x > width * (1 - CENTER_MARGIN):
+        if obj_center_x > width * (1 - YOLO_CENTER_SIDE_MARGIN):
             return "RIGHT"
         return "CENTER"
 
@@ -386,12 +396,16 @@ class AutoNavigator:
         return self._stop_event.is_set()
 
     def _is_arrived(self, box: list[float], frame_width: int, frame_height: int) -> bool:
+        ratio = self._box_area_ratio(box, frame_width, frame_height)
+        logger.debug("Auto: box area ratio = %.2f (threshold=%.2f)", ratio, ARRIVAL_AREA_RATIO)
+        return ratio >= ARRIVAL_AREA_RATIO
+
+    @staticmethod
+    def _box_area_ratio(box: list[float], frame_width: int, frame_height: int) -> float:
         x1, y1, x2, y2 = box
         box_area = (x2 - x1) * (y2 - y1)
         frame_area = frame_width * frame_height
-        ratio = box_area / frame_area if frame_area > 0 else 0
-        logger.debug("Auto: box area ratio = %.2f (threshold=%.2f)", ratio, ARRIVAL_AREA_RATIO)
-        return ratio >= ARRIVAL_AREA_RATIO
+        return box_area / frame_area if frame_area > 0 else 0.0
 
     def _ultrasonic_ready(self) -> bool:
         return (
@@ -399,24 +413,92 @@ class AutoNavigator:
             and getattr(self.ultrasonic, "enabled", False)
         )
 
-    def _ready_to_water(self, box: list[float], frame_width: int, frame_height: int) -> bool:
-        """Decide whether a *centered* plant is close enough to water.
+    def _start_watering_handoff(
+        self,
+        target: dict,
+        frame_width: int,
+        frame_height: int,
+    ) -> bool:
+        """Latch a centered close-up plant so ultrasonic can finish approach."""
+        if not self._ultrasonic_ready():
+            return False
+        ratio = self._box_area_ratio(target["box"], frame_width, frame_height)
+        if ratio < YOLO_WATER_HANDOFF_AREA_RATIO:
+            logger.debug(
+                "Auto: YOLO handoff gate - area=%.2f/%.2f; keep approaching",
+                ratio,
+                YOLO_WATER_HANDOFF_AREA_RATIO,
+            )
+            return False
+        self._watering_handoff_target = dict(target)
+        self._watering_handoff_deadline = (
+            time.monotonic() + WATER_HANDOFF_TIMEOUT_SECONDS
+        )
+        logger.info(
+            NavLog.WATER_HANDOFF_STARTED.value,
+            target.get("id"),
+            ratio,
+            YOLO_WATER_HANDOFF_AREA_RATIO,
+            WATER_HANDOFF_TIMEOUT_SECONDS,
+        )
+        return True
 
-        Prefers the ultrasonic front distance as the physical "arrived" signal
-        (YOLO box-area is jittery). Falls back to box-area only when the sensor
-        is unavailable or returned no reading this cycle.
+    def _watering_handoff_active(self) -> bool:
+        if self._watering_handoff_target is None:
+            return False
+        if time.monotonic() < self._watering_handoff_deadline:
+            return True
+        self.motor.stop()
+        self._clear_watering_handoff()
+        logger.info(NavLog.WATER_HANDOFF_EXPIRED.value)
+        return False
+
+    def _clear_watering_handoff(self):
+        self._watering_handoff_target = None
+        self._watering_handoff_deadline = 0.0
+
+    def _fresh_ultrasonic_distance_cm(self) -> float | None:
+        """Get a fresh final-approach reading; use cache if the read raises."""
+        try:
+            return self.ultrasonic.read_distance_cm()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Auto: fresh ultrasonic read failed during handoff: %s", exc)
+            return self.ultrasonic.distance_cm()
+
+    def _step_watering_handoff(self) -> bool:
+        """Advance a YOLO-confirmed plant using ultrasonic alone.
+
+        Returns True when the navigation loop should stop.
         """
-        if self._ultrasonic_ready():
-            cm = self.ultrasonic.distance_cm()
-            if cm is not None:
-                ready = cm <= WATER_DISTANCE_CM
-                logger.info(
-                    "Auto: water gate — front=%.1f cm (threshold=%d cm) → %s",
-                    cm, WATER_DISTANCE_CM, "WATER" if ready else "approach",
-                )
-                return ready
-            logger.debug("Auto: no ultrasonic reading — falling back to YOLO box area")
-        return self._is_arrived(box, frame_width, frame_height)
+        target = self._watering_handoff_target
+        if target is None:
+            return False
+        cm = self._fresh_ultrasonic_distance_cm()
+        if cm is None:
+            self.motor.stop()
+            logger.info(NavLog.WATER_HANDOFF_NO_READING.value)
+            return self._sleep(0.1)
+        if cm <= ULTRASONIC_WATER_DISTANCE_CM:
+            logger.info(
+                NavLog.WATER_HANDOFF_READY.value,
+                cm,
+                ULTRASONIC_WATER_DISTANCE_CM,
+            )
+            return self._water_target_and_recover(target)
+
+        logger.info(
+            NavLog.WATER_HANDOFF_APPROACH.value,
+            cm,
+            ULTRASONIC_WATER_DISTANCE_CM,
+            WATER_HANDOFF_FORWARD_SPEED,
+            WATER_HANDOFF_FORWARD_SECONDS,
+        )
+        self.motor.forward(WATER_HANDOFF_FORWARD_SPEED)
+        if self._sleep(WATER_HANDOFF_FORWARD_SECONDS):
+            self.motor.stop()
+            return True
+        self.motor.stop()
+        return False
 
     def _get_turn_speed(self) -> float:
         speed = AUTO_SPEED_TURN_GENTLE if self._oscillating else AUTO_SPEED_TURN
@@ -590,16 +672,47 @@ class AutoNavigator:
             else:
                 logger.warning("Auto: ReID embeddings unavailable for watered plant")
 
+    def _water_target_and_recover(self, target: dict) -> bool:
+        """Water one plant, then retreat or return to base.
+
+        Returns True when the navigation loop should stop.
+        """
+        self._clear_watering_handoff()
+        self._do_watering(target)
+        if not self.is_active:
+            return True
+
+        found_next = self._reverse_after_watering(
+            target.get("id"),
+            target.get("box"),
+            watch_for_plants=not self._returning,
+        )
+        if self._stop_event.is_set():
+            return True
+
+        # Mission target reached: after reversing, let the loop top look for
+        # the base QR. Otherwise immediately retarget a plant spotted while
+        # reversing or scan for one.
+        if self._returning or found_next:
+            return False
+
+        return self._scan_for_target()
+
     # ------------------------------------------------------------------
     # Phase: retreat after watering
     # ------------------------------------------------------------------
 
-    def _retreat_and_search(self, target_id, fallback_box) -> bool:
+    def _reverse_after_watering(
+        self,
+        target_id,
+        fallback_box,
+        watch_for_plants: bool,
+    ) -> bool:
         """
-        Drive backward for RETREAT_DURATION while watching for any unwatered
-        plant to appear in frame. Returns True if a new target showed up so
-        the main loop can immediately retarget; False if the window expired
-        with nothing seen.
+        Always drive backward for POST_WATER_REVERSE_SECONDS after watering.
+        While more plants are needed, watch for an unwatered plant so the main
+        loop can immediately retarget it after the reverse completes. While
+        returning, simply clear space so the loop can start looking for base QR.
 
         While retreating, extra ReID views of the just-watered plant are
         captured (gated on its ByteTrack id, so we never grab the wrong
@@ -608,11 +721,16 @@ class AutoNavigator:
         is lost it is still recognised as watered — preventing the
         re-approach/retreat ping-pong. Capture is throttled by
         REID_RETREAT_INTERVAL and lives inside this loop, so it scales with
-        RETREAT_DURATION automatically (nothing hardcoded to 4 s).
+        POST_WATER_REVERSE_SECONDS automatically.
         """
-        logger.info(NavLog.RETREATING.value, RETREAT_DURATION)
+        destination = "another plant" if watch_for_plants else "the base QR"
+        logger.info(
+            NavLog.POST_WATER_REVERSING.value,
+            POST_WATER_REVERSE_SECONDS,
+            destination,
+        )
         self.motor.backward(AUTO_SPEED_BACKWARD)
-        deadline = time.monotonic() + RETREAT_DURATION
+        deadline = time.monotonic() + POST_WATER_REVERSE_SECONDS
         capture = self._reid_available() and target_id is not None
         next_capture = time.monotonic() + REID_RETREAT_INTERVAL
         found = False
@@ -621,12 +739,13 @@ class AutoNavigator:
             while time.monotonic() < deadline:
                 if self._stop_event.is_set():
                     break
-                unwatered, _, _ = self._snapshot_unwatered()
-                if unwatered:
+                unwatered = []
+                if watch_for_plants:
+                    unwatered, _, _ = self._snapshot_unwatered()
+                if unwatered and not found:
                     logger.info(NavLog.RETREAT_NEW_PLANT.value,
                                 unwatered[0].get("id"))
                     found = True
-                    break
 
                 # Enrich the watered plant's ReID cluster with farther views
                 # while it is still tracked (still ID-filtered as watered).
@@ -851,29 +970,26 @@ class AutoNavigator:
             and self.ultrasonic.is_obstacle()
         )
 
-    def _centered_target_in_view(self) -> bool:
-        """True if an unwatered plant is currently centered in frame.
-
-        Used to suppress obstacle avoidance: when we are driving up to a
-        centered plant to water it, the ultrasonic sees the plant itself as a
-        near obstacle — without this guard the robot would reverse away from
-        the very plant it is trying to water. Does not apply while returning to
-        base (no plant targets then; obstacles are real walls).
-        """
-        if self._returning:
+    def _acquire_watering_handoff_if_ready(self) -> bool:
+        """Give a centered close-up YOLO plant priority over obstacle logic."""
+        if self._returning or not self._ultrasonic_ready():
             return False
-        detections, width, _ = self._snapshot_unwatered()
+        detections, width, height = self._snapshot_unwatered()
         if not detections:
             return False
         best = max(detections, key=lambda d: d["confidence"])
         x1, _, x2, _ = best["box"]
-        return self._get_zone((x1 + x2) / 2.0, width) == "CENTER"
+        if self._get_zone((x1 + x2) / 2.0, width) != "CENTER":
+            return False
+        return self._start_watering_handoff(best, width, height)
 
     def _avoid_obstacle(self) -> bool:
+        # ESP32 SCAN reads front, then left, then right, and re-centres.
         direction = self.ultrasonic.best_direction() or "right"
         logger.info(NavLog.OBSTACLE_AVOIDANCE.value, direction)
 
         self.motor.stop()
+        logger.info(NavLog.OBSTACLE_BACKUP.value, ULTRASONIC_AVOID_BACKWARD_SECONDS)
         self.motor.backward(ULTRASONIC_AVOID_SPEED)
         if self._sleep(ULTRASONIC_AVOID_BACKWARD_SECONDS):
             return True
@@ -882,16 +998,24 @@ class AutoNavigator:
         restore = self.motor.left if direction == "right" else self.motor.right
 
         self.motor.stop()
+        logger.info(NavLog.OBSTACLE_SWING.value, direction, ULTRASONIC_AVOID_TURN_SECONDS)
         turn(ULTRASONIC_AVOID_SPEED)
         if self._sleep(ULTRASONIC_AVOID_TURN_SECONDS):
             return True
 
         self.motor.stop()
+        logger.info(NavLog.OBSTACLE_FORWARD.value, ULTRASONIC_AVOID_FORWARD_SECONDS)
         self.motor.forward(ULTRASONIC_AVOID_SPEED)
         if self._sleep(ULTRASONIC_AVOID_FORWARD_SECONDS):
             return True
 
         self.motor.stop()
+        restore_direction = "left" if direction == "right" else "right"
+        logger.info(
+            NavLog.OBSTACLE_RESTORE.value,
+            restore_direction,
+            ULTRASONIC_AVOID_TURN_SECONDS,
+        )
         restore(ULTRASONIC_AVOID_SPEED)
         if self._sleep(ULTRASONIC_AVOID_TURN_SECONDS):
             return True
@@ -908,9 +1032,24 @@ class AutoNavigator:
     def _loop(self):
         try:
             while self.is_active:
-                # A centered plant reads as a near obstacle as we approach it —
-                # don't avoid the target we're trying to water.
-                if self._obstacle_detected() and not self._centered_target_in_view():
+                # Once YOLO has centered a sufficiently large plant box, let
+                # ultrasonic own the final close approach. This survives YOLO
+                # losing the oversized plant image and suppresses obstacle
+                # avoidance only for the bounded handoff window.
+                if self._watering_handoff_active():
+                    if self._step_watering_handoff():
+                        break
+                    continue
+
+                if self._camera_alive() and self._acquire_watering_handoff_if_ready():
+                    if self._step_watering_handoff():
+                        break
+                    continue
+
+                # Without a YOLO watering handoff, a near ultrasonic reading is
+                # an obstacle: scan left/right, reverse, swing, go around, and
+                # undo the swing before continuing.
+                if self._obstacle_detected():
                     if self._avoid_obstacle():
                         break
                     continue
@@ -966,27 +1105,13 @@ class AutoNavigator:
                             break
                         continue
 
-                    # --- ARRIVED: water the plant ---
-                    if zone == "CENTER" and self._ready_to_water([x1, y1, x2, y2], width, height):
-                        self._do_watering(best)
-                        if not self.is_active:
-                            break
-
-                        # Mission target reached — skip the plant retreat and
-                        # let the loop top take over the return-to-base drive.
-                        if self._returning:
-                            continue
-
-                        # Retreat and look for the next unwatered plant
-                        if self._retreat_and_search(best.get("id"), best.get("box")):
-                            # New target spotted — go straight back into the
-                            # loop, which will re-acquire on the next pass.
-                            continue
-                        if self._stop_event.is_set():
-                            break
-
-                        # Nothing seen during retreat — simple scan
-                        if self._scan_for_target():
+                    # --- ARRIVED fallback: ultrasonic unavailable ---
+                    if (
+                        zone == "CENTER"
+                        and not self._ultrasonic_ready()
+                        and self._is_arrived([x1, y1, x2, y2], width, height)
+                    ):
+                        if self._water_target_and_recover(best):
                             break
                         continue
 
@@ -1036,6 +1161,7 @@ class AutoNavigator:
             self.motor.stop()
             self.pump.off()
             self._is_watering = False
+            self._clear_watering_handoff()
             if self._ptz_available():
                 try:
                     self.ptz.look_center()

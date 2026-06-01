@@ -135,24 +135,41 @@ SECTIONS = [
         "desc": "When to water, how long, and how it retreats afterwards.",
         "fields": [
             _f("ARRIVAL_AREA_RATIO", "Plant arrival size",
-               "Water once the plant box fills this fraction of the frame.",
+               "Fallback only when ultrasonic is unavailable: water once the "
+               "centered YOLO plant box fills this fraction of the frame. "
+               "Bigger number = the robot gets closer before watering.",
                "float", min=0.05, max=0.95, step=0.01),
-            _f("CENTER_MARGIN", "Center zone width",
-               "Middle fraction of the frame treated as 'centered' (rest is "
-               "left/right).",
+            _f("YOLO_CENTER_SIDE_MARGIN", "YOLO center side margin",
+               "Fraction reserved for each left/right side of the frame. The "
+               "area between them is centered. Bigger number = narrower, "
+               "stricter center zone; smaller number = easier centering.",
                "float", min=0.05, max=0.49, step=0.01),
-            _f("WATER_DISTANCE_CM", "Water confirm distance (cm)",
-               "In auto mode, a centered plant is watered once the front "
-               "ultrasonic distance is within this many cm (physical "
-               "confirmation of YOLO's 'arrived'). Falls back to plant arrival "
-               "size when the sensor is unavailable.",
+            _f("YOLO_WATER_HANDOFF_AREA_RATIO", "YOLO handoff box size",
+               "Once a centered YOLO plant box fills this fraction of the "
+               "frame, ultrasonic owns the final approach even if YOLO loses "
+               "the close-up plant. Bigger number = hand off closer to plant.",
+               "float", min=0.05, max=0.95, step=0.01),
+            _f("ULTRASONIC_WATER_DISTANCE_CM", "Ultrasonic water distance (cm)",
+               "After YOLO handoff, water once the front ultrasonic reading is "
+               "within this many cm. Bigger number = water farther away; "
+               "smaller number = drive closer before watering.",
                "int", min=2, max=400),
+            _f("WATER_HANDOFF_TIMEOUT_SECONDS", "Ultrasonic handoff timeout",
+               "Maximum seconds to trust ultrasonic alone after the centered "
+               "YOLO handoff. After timeout, normal obstacle logic resumes.",
+               "float", min=0.5, max=30.0, step=0.5),
+            _f("WATER_HANDOFF_FORWARD_SPEED", "Handoff forward speed",
+               "Slower motor speed used during ultrasonic-only final approach.",
+               "float", min=0.0, max=1.0, step=0.05),
+            _f("WATER_HANDOFF_FORWARD_SECONDS", "Handoff forward step",
+               "Seconds to drive per ultrasonic-only final approach step.",
+               "float", min=0.05, max=2.0, step=0.05),
             _f("WATERING_DURATION", "Watering seconds",
                "How long the pump runs per plant.",
                "int", min=1, max=60),
-            _f("RETREAT_DURATION", "Retreat seconds",
-               "How long the robot reverses after watering to look for the next "
-               "plant.",
+            _f("POST_WATER_REVERSE_SECONDS", "Post-water reverse seconds",
+               "Always reverse for this many seconds after watering before "
+               "looking for another plant or the base QR.",
                "float", min=0.0, max=20.0, step=0.5),
             _f("RETREAT_POLL_PERIOD", "Retreat check rate",
                "How often (seconds) to look for a new plant while retreating.",
@@ -207,7 +224,8 @@ SECTIONS = [
         "desc": "Ultrasonic obstacle detection and the avoidance manoeuvre.",
         "fields": [
             _f("ULTRASONIC_OBSTACLE_CM", "Obstacle distance (cm)",
-               "Treat anything closer than this as an obstacle to avoid.",
+               "Treat anything closer than this as an obstacle unless a "
+               "centered YOLO plant already reached the watering handoff size.",
                "int", min=2, max=400),
             _f("ULTRASONIC_POLL_INTERVAL", "Sensor poll interval",
                "Seconds between distance readings.",
@@ -219,13 +237,15 @@ SECTIONS = [
                "Motor speed (0.0–1.0) during the avoidance manoeuvre.",
                "float", min=0.0, max=1.0, step=0.05),
             _f("ULTRASONIC_AVOID_BACKWARD_SECONDS", "Avoid: back up",
-               "Seconds to reverse when an obstacle is hit.",
+               "After scanning left and right, reverse for this many seconds.",
                "float", min=0.0, max=10.0, step=0.1),
-            _f("ULTRASONIC_AVOID_TURN_SECONDS", "Avoid: turn",
-               "Seconds to turn away from the obstacle.",
+            _f("ULTRASONIC_AVOID_TURN_SECONDS", "Avoid: swing turn",
+               "Seconds for the strong swing toward the clearer side. The "
+               "same duration is used to undo the turn after moving forward.",
                "float", min=0.0, max=10.0, step=0.1),
             _f("ULTRASONIC_AVOID_FORWARD_SECONDS", "Avoid: go around",
-               "Seconds to drive forward past the obstacle.",
+               "Seconds to drive forward past the obstacle before undoing the "
+               "swing turn.",
                "float", min=0.0, max=10.0, step=0.1),
         ],
     },

@@ -135,16 +135,25 @@ ULTRASONIC_SERIAL_TIMEOUT = 3.0  # > worst-case SCAN (~2s) so replies aren't cut
 ULTRASONIC_OBSTACLE_CM = 20
 ULTRASONIC_POLL_INTERVAL = 0.5
 ULTRASONIC_SCAN_COOLDOWN = 3.0
-# In auto mode, a centered plant is watered once the front distance is within
-# this range (physical confirmation that YOLO's "arrived" is real). Falls back
-# to YOLO box-area when the sensor is unavailable. See AutoNavigator._ready_to_water.
-WATER_DISTANCE_CM = 20
+# Final watering approach:
+# 1. YOLO must first see a centered plant whose box fills at least this fraction
+#    of the frame. A BIGGER ratio means the plant must look CLOSER before the
+#    navigator hands the final approach over to the ultrasonic sensor.
+# 2. During that handoff, the ultrasonic alone confirms the final distance, so
+#    watering can still happen after YOLO loses the oversized close-up plant.
+#    A BIGGER distance means water FARTHER away; a SMALLER distance means drive
+#    CLOSER before watering.
+YOLO_WATER_HANDOFF_AREA_RATIO = 0.30
+ULTRASONIC_WATER_DISTANCE_CM = 20
+WATER_HANDOFF_TIMEOUT_SECONDS = 6.0
+WATER_HANDOFF_FORWARD_SPEED = 0.35
+WATER_HANDOFF_FORWARD_SECONDS = 0.25
 
 # Autonomous obstacle avoidance movement.
-ULTRASONIC_AVOID_BACKWARD_SECONDS = 1.0
-ULTRASONIC_AVOID_TURN_SECONDS = 0.8
-ULTRASONIC_AVOID_FORWARD_SECONDS = 1.2
 ULTRASONIC_AVOID_SPEED = 0.5
+ULTRASONIC_AVOID_BACKWARD_SECONDS = 1.0  # reverse after left/right scan
+ULTRASONIC_AVOID_TURN_SECONDS = 0.8      # swing to clear side, then undo swing
+ULTRASONIC_AVOID_FORWARD_SECONDS = 1.2  # move past obstacle before undoing turn
 
 # --- Autonomous mission: return to base ---
 # How many plants to water before heading home. After this many watering
@@ -203,18 +212,23 @@ REID_CAPTURE_SAMPLES   = 5       # embeddings captured while parked at a plant
 REID_CAPTURE_INTERVAL  = 0.2     # seconds between those samples
 REID_RETREAT_INTERVAL  = 0.4     # seconds between ReID captures while retreating
 
-# Geometry: middle fraction of the frame treated as "CENTER".
-CENTER_MARGIN          = 0.33
+# Geometry: fraction reserved for EACH left/right side of the frame. The area
+# between them counts as CENTER. Bigger side margins mean a narrower, stricter
+# center zone; smaller side margins make centering easier.
+YOLO_CENTER_SIDE_MARGIN = 0.33
 
-# Arrival: water once the plant box fills this fraction of the frame.
+# Fallback only: if ultrasonic is unavailable, water once the centered plant
+# box fills this fraction of the frame. A bigger ratio means water closer.
 ARRIVAL_AREA_RATIO     = 0.5
 
 # Watering run length (seconds the pump stays on per plant).
 WATERING_DURATION      = 5
 
-# Retreat after watering.
-RETREAT_DURATION       = 4.0     # seconds the robot drives backward
-RETREAT_POLL_PERIOD    = 0.1     # how often to check for new targets while reversing
+# Always reverse after watering before searching for another plant or the base.
+# This clears the watered plant from the camera and gives the next target / QR
+# room to enter the frame.
+POST_WATER_REVERSE_SECONDS = 2.0
+RETREAT_POLL_PERIOD        = 0.1  # how often to check for new targets while reversing
 
 # How many cycles with no detection before switching from holding to scanning.
 LOST_THRESHOLD         = 3

@@ -103,7 +103,9 @@ ready = green, error = red/blink.
 | ESP32 sensor head | USB serial | Configure `ULTRASONIC_SERIAL_PORT` in `components/config.py` |
 Manual mode logs front/left/right readings and drives the Ultrasonic LED.
 Automatic mode also uses the sensor for obstacle avoidance when distance is
-below `ULTRASONIC_OBSTACLE_CM`.
+below `ULTRASONIC_OBSTACLE_CM`. For watering, a centered close-up YOLO plant
+gets a bounded ultrasonic-only final approach so the robot can still water
+after the camera loses sight of an oversized nearby plant.
 
 ### Camera (no GPIO — network device)
 
@@ -210,8 +212,11 @@ State machine:
 
 1. **Track** → pick the highest-confidence *unwatered* plant; turn
    (LEFT/RIGHT zone) or drive forward (CENTER).
-2. **Water** → when the box fills ≥ 50 % and is centered, pump runs 5 s
-   (a `WATERING PLANT...` banner overlays the stream).
+2. **Water handoff** → once a centered YOLO box reaches
+   `YOLO_WATER_HANDOFF_AREA_RATIO`, ultrasonic owns the bounded final approach
+   even if YOLO loses the oversized close-up plant. Once front distance is
+   within `ULTRASONIC_WATER_DISTANCE_CM`, the pump runs 5 s. If ultrasonic is
+   unavailable, centered YOLO area falls back to `ARRIVAL_AREA_RATIO`.
 3. **Watered-plant memory** →
    - ByteTrack IDs of watered plants → drawn blue / `WATERED`.
    - **Multi-view appearance Re-ID**: several embeddings are captured per
@@ -219,7 +224,8 @@ State machine:
      if the top-2 mean cosine similarity ≥ 0.82. This survives ByteTrack ID
      loss after occlusion, a 180° turn, or a PTZ sweep. Falls back to
      ID-only memory if torch/torchvision is missing.
-4. **Retreat** → reverse 4 s watching for the next unwatered plant.
+4. **Post-water reverse** → always reverse 2 s after watering, then look for
+   the next unwatered plant or the base QR when the watering quota is complete.
 5. **Scan when lost** (biased toward the side the plant was last pursued):
    - **Stepped camera sweep** — pan in **22.5° hops up to ±90°**, biased
      side first; the camera fully stops and settles before each detection
@@ -228,6 +234,23 @@ State machine:
      in **4 discrete ~45° steps (~180° total)**, checking for plants between
      every step and bailing early the moment one appears.
    - No PTZ camera → camera sweep is skipped; motor scan only.
+
+Obstacle avoidance runs only when there is no active watering handoff. The
+ESP32 scans left and right, then the robot reverses, swings toward the clearer
+side, drives forward, and undoes the swing before continuing.
+
+Watering threshold tuning:
+
+- `YOLO_CENTER_SIDE_MARGIN`: bigger value means a narrower, stricter centered
+  zone; smaller value makes centering easier.
+- `YOLO_WATER_HANDOFF_AREA_RATIO`: bigger value means YOLO must see a larger
+  box, so the robot hands off closer to the plant.
+- `ULTRASONIC_WATER_DISTANCE_CM`: bigger value means water farther away;
+  smaller value means drive closer before watering.
+- `WATER_HANDOFF_FORWARD_SPEED`, `WATER_HANDOFF_FORWARD_SECONDS`, and
+  `WATER_HANDOFF_TIMEOUT_SECONDS`: tune the slower ultrasonic-only approach.
+- `POST_WATER_REVERSE_SECONDS`: mandatory reverse after watering before
+  searching for another plant or acting on the base QR.
 
 ---
 
