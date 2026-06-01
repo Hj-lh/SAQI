@@ -157,8 +157,23 @@ PLANTS_PER_RUN = 2
 BASE_QR_PAYLOAD = "SAQI_BASE"
 
 # The base is considered "reached" once its QR bounding box fills at least
-# this fraction of the camera frame (same idea as ARRIVAL_AREA_RATIO).
+# this fraction of the camera frame (same idea as ARRIVAL_AREA_RATIO). Used as
+# a fallback when the ultrasonic is unavailable; otherwise distance wins.
 BASE_ARRIVAL_AREA_RATIO = 0.35
+
+# Ultrasonic confirmation for base arrival: once the base QR is centered AND the
+# front distance is within this range, the robot is "home". Preferred over the
+# area ratio above when the sensor is available.
+BASE_ARRIVAL_DISTANCE_CM = 40
+
+# Keep the last base sighting alive this long through brief detection misses, so
+# the QR box (and the approach) stops flickering when a frame fails to decode.
+BASE_SIGHTING_HOLD_SECONDS = 0.6
+
+# On arrival the robot spins ~180° in place (to face away from the base) before
+# the mission ends: turn left at this speed for this many seconds.
+BASE_SPIN_SPEED = 0.60
+BASE_SPIN_SECONDS = 3.75
 
 # ---------------------------------------------------------------------------
 # Autonomous navigation tuning

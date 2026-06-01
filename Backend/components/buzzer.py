@@ -113,6 +113,15 @@ class BuzzerController:
         logger.info(BuzzerLog.MODE_CHANGED.value, "automatic" if active else "manual")
         self._wake_event.set()
 
+    def announce_arrival(self):
+        """Play a distinctive 'arrived at base' fanfare (non-blocking)."""
+        if not self.enabled:
+            return
+        with self._lock:
+            self._event_cues.append(self._arrival_cue())
+        logger.info(BuzzerLog.BASE_ARRIVAL.value)
+        self._wake_event.set()
+
     def update_distance(self, cm: float | None):
         """Update the latest front distance used by the proximity warning."""
         now = time.monotonic()
@@ -142,6 +151,15 @@ class BuzzerController:
     def _mode_cue(auto_active: bool) -> list[tuple[int | None, float]]:
         notes = (880, 1175) if auto_active else (1175, 880)
         return [(notes[0], 0.09), (None, 0.04), (notes[1], 0.12)]
+
+    @staticmethod
+    def _arrival_cue() -> list[tuple[int | None, float]]:
+        # Rising triad fanfare (G5 → B5 → E6) ending on a held note.
+        return [
+            (784, 0.12), (None, 0.03),
+            (988, 0.12), (None, 0.03),
+            (1319, 0.30), (None, 0.06),
+        ]
 
     @staticmethod
     def _pump_cue(active: bool) -> list[tuple[int | None, float]]:

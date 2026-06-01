@@ -40,6 +40,7 @@ class BuzzerLog(Enum):
     COLLISION_ALARM = "Buzzer collision alarm: front=%.1f cm, sounding for %.1fs"
     COLLISION_SILENCED = "Buzzer collision alarm timed out; quiet until distance reset"
     WRITE_FAILED = "Buzzer GPIO write failed (%s); disabling buzzer audio"
+    BASE_ARRIVAL = "Buzzer base-arrival fanfare"
     CLOSED = "BuzzerController closed"
 
 
@@ -106,3 +107,4 @@ class NavLog(Enum):
     BASE_TURN = "Auto: base %s -> turning %s (speed=%.2f, %.1fs)"
     BASE_APPROACH = "Auto: base CENTER -> approaching (area=%.2f/%.2f)"
     ARRIVED_BASE = "Auto: ARRIVED at base QR '%s' (area=%.2f) — mission complete"
+    BASE_SPIN = "Auto: base reached — fanfare + spinning 180° (left %.2f for %.2fs)"

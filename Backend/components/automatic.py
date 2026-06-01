@@ -51,6 +51,10 @@ from components.config import (
     PLANTS_PER_RUN,
     BASE_QR_PAYLOAD,
     BASE_ARRIVAL_AREA_RATIO,
+    BASE_ARRIVAL_DISTANCE_CM,
+    BASE_SIGHTING_HOLD_SECONDS,
+    BASE_SPIN_SPEED,
+    BASE_SPIN_SECONDS,
     AUTO_SPEED_FORWARD,
     AUTO_SPEED_BACKWARD,
     AUTO_SPEED_TURN,
@@ -148,6 +152,9 @@ class AutoNavigator:
         self._base_lock = threading.Lock()
         # Latest base QR sighting: {"box", "payload", "w", "h"} or None
         self._latest_base: dict | None = None
+        self._base_seen_time = 0.0          # monotonic time of last real sighting
+        self._base_decoded_once = False     # confirmed the base payload this run?
+        self._base_payload = BASE_QR_PAYLOAD or ""
 
     # ------------------------------------------------------------------
     # Public read-only accessors used by the video stream / annotator
@@ -185,6 +192,9 @@ class AutoNavigator:
         self._returning = False
         with self._base_lock:
             self._latest_base = None
+            self._base_seen_time = 0.0
+            self._base_decoded_once = False
+            self._base_payload = BASE_QR_PAYLOAD or ""
         self._watered_ids.clear()
         self._embed_cache.clear()
         if self.reid is not None:
@@ -245,14 +255,26 @@ class AutoNavigator:
                 # Mission's watering phase is done — hunt for the base QR
                 # instead of plants so the stream and navigator agree.
                 box, payload = self._detect_base(frame)
+                now = time.monotonic()
                 with self._base_lock:
-                    self._latest_base = (
-                        {"box": box, "payload": payload,
-                         "w": frame.shape[1], "h": frame.shape[0]}
-                        if box is not None else None
-                    )
-                SAQI_LEDS.detect(box is not None)
-                annotated = self._annotate_base(frame, box, payload)
+                    if box is not None:
+                        self._latest_base = {
+                            "box": box, "payload": payload,
+                            "w": frame.shape[1], "h": frame.shape[0],
+                        }
+                        self._base_seen_time = now
+                    elif (
+                        self._latest_base is not None
+                        and now - self._base_seen_time > BASE_SIGHTING_HOLD_SECONDS
+                    ):
+                        self._latest_base = None   # held long enough; really lost
+                    # else: keep the last sighting to ride out a brief miss
+                    held = self._latest_base
+                SAQI_LEDS.detect(held is not None)
+                if held is not None:
+                    annotated = self._annotate_base(frame, held["box"], held["payload"])
+                else:
+                    annotated = self._annotate_base(frame, None, None)
             else:
                 detections = self.detector.detect(frame)
                 SAQI_LEDS.detect(bool(detections))
@@ -664,25 +686,49 @@ class AutoNavigator:
     # ------------------------------------------------------------------
 
     def _detect_base(self, frame) -> tuple[list[float] | None, str | None]:
-        """Detect + decode a QR code in ``frame``.
+        """Locate the base QR and, when possible, confirm its payload.
 
-        Returns ``([x1, y1, x2, y2], payload)`` when a QR whose decoded text
-        matches BASE_QR_PAYLOAD is found, otherwise ``(None, None)``.
+        ``detect()`` (locate only) survives motion blur far better than a full
+        ``detectAndDecode()`` — the latter failing intermittently is what makes
+        the approach flicker. We still decode to confirm identity, but once the
+        base payload has been confirmed this run we accept a located quad even
+        on frames where decoding fails, so the box stays stable while driving.
+
+        Returns ``([x1, y1, x2, y2], payload)`` or ``(None, None)``.
         """
         if frame is None:
             return None, None
         try:
-            data, points, _ = self._qr.detectAndDecode(frame)
+            ok, points = self._qr.detect(frame)
         except cv2.error:
             return None, None
-        if not data or points is None:
+        if not ok or points is None:
             return None, None
-        if BASE_QR_PAYLOAD and data != BASE_QR_PAYLOAD:
-            return None, None
+
         pts = points.reshape(-1, 2)
-        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
-        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
-        return [x1, y1, x2, y2], data
+        box = [
+            float(pts[:, 0].min()), float(pts[:, 1].min()),
+            float(pts[:, 0].max()), float(pts[:, 1].max()),
+        ]
+
+        data = ""
+        try:
+            data, _ = self._qr.decode(frame, points)
+        except cv2.error:
+            data = ""
+
+        if data:
+            if BASE_QR_PAYLOAD and data != BASE_QR_PAYLOAD:
+                return None, None          # a different QR — not our base
+            self._base_decoded_once = True
+            self._base_payload = data
+            return box, data
+
+        # Decode failed this frame: trust the located quad only after the base
+        # identity has already been confirmed at least once this run.
+        if self._base_decoded_once:
+            return box, self._base_payload
+        return None, None
 
     def _annotate_base(self, frame, box, payload):
         """Draw the base QR box / a 'returning to base' banner on the stream."""
@@ -715,6 +761,34 @@ class AutoNavigator:
         self.motor.stop()
         self._sleep(SLEEP_WAIT_YOLO)
 
+    def _base_arrived(self, area_ratio: float) -> bool:
+        """Base reached when centered AND the front distance confirms it.
+
+        Prefers the ultrasonic (centered QR + front <= BASE_ARRIVAL_DISTANCE_CM);
+        falls back to QR box-area when the sensor is unavailable / silent.
+        """
+        if self._ultrasonic_ready():
+            cm = self.ultrasonic.distance_cm()
+            if cm is not None:
+                arrived = cm <= BASE_ARRIVAL_DISTANCE_CM
+                logger.info(
+                    "Auto: base arrival gate — front=%.1f cm (threshold=%d cm) → %s",
+                    cm, BASE_ARRIVAL_DISTANCE_CM, "ARRIVED" if arrived else "approach",
+                )
+                return arrived
+            logger.debug("Auto: no ultrasonic reading at base — falling back to QR area")
+        return area_ratio >= BASE_ARRIVAL_AREA_RATIO
+
+    def _celebrate_and_spin(self):
+        """Announce arrival on the buzzer, then spin ~180° in place to face away
+        from the base before the mission ends."""
+        if self.buzzer is not None:
+            self.buzzer.announce_arrival()
+        logger.info(NavLog.BASE_SPIN.value, BASE_SPIN_SPEED, BASE_SPIN_SECONDS)
+        self.motor.left(BASE_SPIN_SPEED)
+        self._sleep(BASE_SPIN_SECONDS)
+        self.motor.stop()
+
     def _step_return_to_base(self) -> bool:
         """One step of the drive-home behaviour. Returns True once the robot
         has arrived at the base (mission complete)."""
@@ -736,10 +810,11 @@ class AutoNavigator:
         area_ratio = ((x2 - x1) * (y2 - y1)) / frame_area if frame_area > 0 else 0.0
         logger.info(NavLog.BASE_DETECTED.value, base["payload"], zone, area_ratio)
 
-        # Arrived?
-        if zone == "CENTER" and area_ratio >= BASE_ARRIVAL_AREA_RATIO:
+        # Arrived? Ultrasonic confirms physical proximity (centered + close).
+        if zone == "CENTER" and self._base_arrived(area_ratio):
             self.motor.stop()
             logger.info(NavLog.ARRIVED_BASE.value, base["payload"], area_ratio)
+            self._celebrate_and_spin()
             self.is_active = False
             return True
 

@@ -62,8 +62,26 @@ SECTIONS = [
                "str"),
             _f("BASE_ARRIVAL_AREA_RATIO", "Base arrival size",
                "Considered 'arrived' once the base QR fills this fraction of the "
-               "frame (bigger = robot stops closer to the base).",
+               "frame (bigger = robot stops closer to the base). Used as a "
+               "fallback when the ultrasonic is unavailable.",
                "float", min=0.05, max=0.95, step=0.01),
+            _f("BASE_ARRIVAL_DISTANCE_CM", "Base arrival distance (cm)",
+               "When the ultrasonic is available, 'arrived' once the base QR is "
+               "centered AND the front distance is within this many cm. Preferred "
+               "over the arrival size above.",
+               "int", min=2, max=400),
+            _f("BASE_SIGHTING_HOLD_SECONDS", "Base sighting hold",
+               "Keep the last base sighting alive this long through brief "
+               "detection misses, so the QR box stops flickering when a frame "
+               "fails to decode.",
+               "float", min=0.0, max=5.0, step=0.1),
+            _f("BASE_SPIN_SPEED", "Arrival spin speed",
+               "On arrival the robot spins in place to face away from the base. "
+               "Left-turn motor speed (0.0–1.0) used for that spin.",
+               "float", min=0.0, max=1.0, step=0.05),
+            _f("BASE_SPIN_SECONDS", "Arrival spin seconds",
+               "How long the arrival spin lasts (seconds). ~180° turn.",
+               "float", min=0.0, max=20.0, step=0.05),
         ],
     },
     {
@@ -123,6 +141,12 @@ SECTIONS = [
                "Middle fraction of the frame treated as 'centered' (rest is "
                "left/right).",
                "float", min=0.05, max=0.49, step=0.01),
+            _f("WATER_DISTANCE_CM", "Water confirm distance (cm)",
+               "In auto mode, a centered plant is watered once the front "
+               "ultrasonic distance is within this many cm (physical "
+               "confirmation of YOLO's 'arrived'). Falls back to plant arrival "
+               "size when the sensor is unavailable.",
+               "int", min=2, max=400),
             _f("WATERING_DURATION", "Watering seconds",
                "How long the pump runs per plant.",
                "int", min=1, max=60),
