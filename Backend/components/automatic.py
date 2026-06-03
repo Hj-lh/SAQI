@@ -70,6 +70,8 @@ from components.config import (
     MOVE_FORWARD_DURATION,
     SLEEP_WAIT_YOLO,
     SCAN_TURN_DURATION,
+    SCAN_CONTINUOUS,
+    SCAN_CONTINUOUS_SPEED,
     REID_CAPTURE_SAMPLES,
     REID_CAPTURE_INTERVAL,
     REID_RETREAT_INTERVAL,
@@ -77,6 +79,7 @@ from components.config import (
     ARRIVAL_AREA_RATIO,
     WATERING_DURATION,
     POST_WATER_REVERSE_SECONDS,
+    POST_WATER_SETTLE_SECONDS,
     RETREAT_POLL_PERIOD,
     LOST_THRESHOLD,
 )
@@ -690,6 +693,12 @@ class AutoNavigator:
         if self._stop_event.is_set():
             return True
 
+        # Settle in place so the ReID views captured during the reverse are
+        # safely stored before the robot moves on (watering is too close for a
+        # clean crop, so those receding-plant views are the good ones).
+        if self._settle_after_watering():
+            return True
+
         # Mission target reached: after reversing, let the loop top look for
         # the base QR. Otherwise immediately retarget a plant spotted while
         # reversing or scan for one.
@@ -714,14 +723,18 @@ class AutoNavigator:
         loop can immediately retarget it after the reverse completes. While
         returning, simply clear space so the loop can start looking for base QR.
 
-        While retreating, extra ReID views of the just-watered plant are
-        captured (gated on its ByteTrack id, so we never grab the wrong
-        plant) and appended to its cluster. This teaches the cluster the
-        farther/angled views, so once the plant is distant and its track id
-        is lost it is still recognised as watered — preventing the
-        re-approach/retreat ping-pong. Capture is throttled by
-        REID_RETREAT_INTERVAL and lives inside this loop, so it scales with
-        POST_WATER_REVERSE_SECONDS automatically.
+        While retreating, ReID views of the just-watered plant are captured
+        as it recedes to a YOLO-detectable distance, and appended to its
+        cluster. This is the *primary* source of usable embeddings: watering
+        happens with the plant pressed right up against the camera (ultrasonic
+        confirmed) where YOLO can't produce a clean box, so the close-up
+        capture at watering time is often empty. Capturing here — while the
+        plant shrinks back into frame — is what actually populates the memory.
+
+        Capture prefers the original ByteTrack id while it survives, then falls
+        back to the most-centered detection (the robot reversed straight away
+        from the plant, so it sits near the frame center). Throttled by
+        REID_RETREAT_INTERVAL, so it scales with POST_WATER_REVERSE_SECONDS.
         """
         destination = "another plant" if watch_for_plants else "the base QR"
         logger.info(
@@ -731,7 +744,7 @@ class AutoNavigator:
         )
         self.motor.backward(AUTO_SPEED_BACKWARD)
         deadline = time.monotonic() + POST_WATER_REVERSE_SECONDS
-        capture = self._reid_available() and target_id is not None
+        capture = self._reid_available()
         next_capture = time.monotonic() + REID_RETREAT_INTERVAL
         found = False
 
@@ -747,19 +760,13 @@ class AutoNavigator:
                                 unwatered[0].get("id"))
                     found = True
 
-                # Enrich the watered plant's ReID cluster with farther views
-                # while it is still tracked (still ID-filtered as watered).
+                # Record the receding watered plant into the appearance memory.
                 if capture and time.monotonic() >= next_capture:
                     next_capture = time.monotonic() + REID_RETREAT_INTERVAL
-                    with self._lock:
-                        still_tracked = any(
-                            d.get("id") == target_id for d in self.latest_detections
-                        )
-                    if still_tracked:
-                        emb = self._embed_target(target_id, fallback_box)
-                        if emb is not None:
-                            logger.info(NavLog.RETREAT_REID_VIEW.value, target_id)
-                            self.reid.extend_last([emb])
+                    emb, cap_id = self._capture_retreat_view(target_id, fallback_box)
+                    if emb is not None:
+                        logger.info(NavLog.RETREAT_REID_VIEW.value, cap_id)
+                        self.reid.extend_last([emb])
 
                 if self._stop_event.wait(timeout=RETREAT_POLL_PERIOD):
                     break
@@ -767,6 +774,51 @@ class AutoNavigator:
             self.motor.stop()
 
         return found
+
+    def _capture_retreat_view(self, target_id, fallback_box):
+        """Grab one ReID view of the just-watered plant during the reverse.
+
+        Prefers the original track id while it is still visible; otherwise the
+        detection nearest the horizontal center (we backed straight away from
+        the watered plant, so it stays roughly centered as it recedes). Returns
+        ``(embedding | None, capture_id)``.
+        """
+        with self._lock:
+            frame = self.latest_frame
+            dets = list(self.latest_detections)
+            width = self.frame_width
+        if frame is None:
+            return None, target_id
+
+        box = None
+        cap_id = target_id
+        if target_id is not None:
+            for d in dets:
+                if d.get("id") == target_id:
+                    box = d.get("box")
+                    break
+        if box is None and dets:
+            center_x = width / 2.0
+            best = min(
+                dets,
+                key=lambda d: abs((d["box"][0] + d["box"][2]) / 2.0 - center_x),
+            )
+            box = best.get("box")
+            cap_id = best.get("id")
+        if box is None:
+            box = fallback_box
+
+        return self.reid.embed(frame, box), cap_id
+
+    def _settle_after_watering(self) -> bool:
+        """Idle in place (motors stopped) for POST_WATER_SETTLE_SECONDS after the
+        reverse, so the receding-plant ReID views are safely recorded before the
+        robot resumes. Returns True if a stop was requested during the wait."""
+        if POST_WATER_SETTLE_SECONDS <= 0:
+            return self._stop_event.is_set()
+        self.motor.stop()
+        logger.info(NavLog.POST_WATER_SETTLE.value, POST_WATER_SETTLE_SECONDS)
+        return self._sleep(POST_WATER_SETTLE_SECONDS)
 
     # ------------------------------------------------------------------
     # Phase: scan
@@ -781,8 +833,26 @@ class AutoNavigator:
 
         Short turns let multiple loop iterations refine alignment without
         overshoot. Returns True if a stop was requested mid-scan.
+
+        When SCAN_CONTINUOUS is enabled the robot instead keeps rotating in one
+        smooth turn at SCAN_CONTINUOUS_SPEED (the motor is never stopped here),
+        and simply waits for a detection. The motor command stays latched across
+        loop iterations, so it reads as a single continuous spin until a plant
+        appears and the main loop stops to re-evaluate.
         """
         scan_direction = self._last_known_zone
+
+        if SCAN_CONTINUOUS:
+            logger.info(NavLog.SCAN_CONTINUOUS.value,
+                        scan_direction, SCAN_CONTINUOUS_SPEED)
+            if scan_direction == "RIGHT":
+                self.motor.right(SCAN_CONTINUOUS_SPEED)
+            else:
+                self.motor.left(SCAN_CONTINUOUS_SPEED)
+            # Don't stop the motor — let it keep turning until something shows.
+            self._just_finished_scan = True
+            return self._wait_for_detections(SLEEP_WAIT_YOLO)
+
         if scan_direction == "RIGHT":
             logger.debug("Auto: scanning RIGHT (last seen on right)")
             self.motor.right(AUTO_SPEED_TURN)
@@ -867,9 +937,26 @@ class AutoNavigator:
 
     def _scan_for_base(self):
         """Rotate toward the side the base was last seen, then settle so the
-        inference loop can grab a fresh QR read. Searches indefinitely."""
+        inference loop can grab a fresh QR read. Searches indefinitely.
+
+        With SCAN_CONTINUOUS enabled the robot keeps rotating smoothly at
+        SCAN_CONTINUOUS_SPEED (motor not stopped); the inference loop updates the
+        base sighting and the main loop hands control to the approach once the QR
+        is in view. Note: continuous motion blurs frames, so QR decoding may be
+        less reliable than the stepped scan — prefer stepped if the base is hard
+        to read while moving.
+        """
         direction = self._last_known_zone
         logger.info(NavLog.RETURN_SCANNING.value, direction, BASE_QR_PAYLOAD)
+
+        if SCAN_CONTINUOUS:
+            if direction == "RIGHT":
+                self.motor.right(SCAN_CONTINUOUS_SPEED)
+            else:
+                self.motor.left(SCAN_CONTINUOUS_SPEED)
+            self._sleep(SLEEP_WAIT_YOLO)   # keep turning; let inference read the QR
+            return
+
         if direction == "RIGHT":
             self.motor.right(AUTO_SPEED_TURN)
         else:

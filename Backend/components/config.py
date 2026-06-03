@@ -207,6 +207,13 @@ SLEEP_WAIT_YOLO        = 1.5
 # Scanning: how long each rotate-to-search turn lasts (seconds).
 SCAN_TURN_DURATION     = 1.0
 
+# Scan style. False (default) = stepped scan: turn a little, stop, look, repeat.
+# True = continuous scan: the robot keeps rotating in one smooth turn at
+# SCAN_CONTINUOUS_SPEED until a target (plant or base QR) comes into view, then
+# stops to re-evaluate. Use a slow speed so it doesn't overshoot the target.
+SCAN_CONTINUOUS        = False
+SCAN_CONTINUOUS_SPEED  = 0.5
+
 # ReID multi-view capture at watering time.
 REID_CAPTURE_SAMPLES   = 5       # embeddings captured while parked at a plant
 REID_CAPTURE_INTERVAL  = 0.2     # seconds between those samples
@@ -229,6 +236,15 @@ WATERING_DURATION      = 5
 # room to enter the frame.
 POST_WATER_REVERSE_SECONDS = 2.0
 RETREAT_POLL_PERIOD        = 0.1  # how often to check for new targets while reversing
+
+# After the post-water reverse finishes, idle in place (motors stopped) for this
+# long before resuming the hunt for the next plant or the base. Watering happens
+# very close to the plant (ultrasonic-confirmed) where YOLO can't get a clean
+# crop, so the good ReID views are the ones captured *during* the reverse as the
+# plant recedes to a detectable distance. This settle pause gives those captures
+# time to land in the plant-memory store before the robot moves on. Set to 0 to
+# resume immediately.
+POST_WATER_SETTLE_SECONDS  = 60.0
 
 # How many cycles with no detection before switching from holding to scanning.
 LOST_THRESHOLD         = 3

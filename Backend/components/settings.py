@@ -125,8 +125,18 @@ SECTIONS = [
                "float", min=0.1, max=10.0, step=0.1),
             _f("SCAN_TURN_DURATION", "Scan turn",
                "Seconds of rotation per scan step when searching for a plant or "
-               "the base.",
+               "the base. Used only in stepped scan mode.",
                "float", min=0.1, max=5.0, step=0.1),
+            _f("SCAN_CONTINUOUS", "Continuous scan",
+               "OFF = stepped scan (turn a little, stop, look, repeat). "
+               "ON = keep rotating in one smooth turn until a plant or the base "
+               "QR appears, then stop to re-evaluate.",
+               "bool"),
+            _f("SCAN_CONTINUOUS_SPEED", "Continuous scan speed",
+               "Turn speed (0.0–1.0) used when continuous scan is ON. Keep it "
+               "slow so the robot doesn't overshoot the target (and so QR codes "
+               "stay readable while moving).",
+               "float", min=0.0, max=1.0, step=0.05),
         ],
     },
     {
@@ -169,8 +179,15 @@ SECTIONS = [
                "int", min=1, max=60),
             _f("POST_WATER_REVERSE_SECONDS", "Post-water reverse seconds",
                "Always reverse for this many seconds after watering before "
-               "looking for another plant or the base QR.",
+               "looking for another plant or the base QR. The plant's appearance "
+               "is recorded into memory during this reverse (watering is too "
+               "close for a clean capture), so don't set it too short.",
                "float", min=0.0, max=20.0, step=0.5),
+            _f("POST_WATER_SETTLE_SECONDS", "Post-water settle seconds",
+               "After the reverse, idle in place this long before resuming, so "
+               "the appearance views captured while reversing are safely stored. "
+               "0 = resume immediately.",
+               "float", min=0.0, max=180.0, step=1.0),
             _f("RETREAT_POLL_PERIOD", "Retreat check rate",
                "How often (seconds) to look for a new plant while retreating.",
                "float", min=0.02, max=2.0, step=0.02),
